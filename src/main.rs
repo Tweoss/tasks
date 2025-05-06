@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
 use chrono::{DateTime, Local};
 use ratatui::{
@@ -13,6 +13,28 @@ use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
 
 fn main() {
+    let args: Vec<_> = std::env::args().collect();
+    if let Some(arg) = args.get(1) {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                println!(
+                    "Usage: {} [options]\nOptions:\n  -h, --help: print this help message\n  -e, --edit: edit the data file\n",
+                    args[0]
+                );
+            }
+            "-e" | "--edit" => {
+                Command::new(std::env::var("EDITOR").unwrap_or("/usr/bin/vim".to_string()))
+                    .arg(*App::get_path())
+                    .spawn()
+                    .unwrap()
+                    .wait()
+                    .unwrap();
+            }
+            &_ => println!("Unknown command. Run with --help for more options."),
+        }
+        return;
+    }
+
     let mut app = App::load().unwrap_or_default();
     let terminal = ratatui::init();
     app.run(terminal);
@@ -252,6 +274,20 @@ impl App {
             match last_mut {
                 BoxState::Empty => {
                     *last_mut = BoxState::Started;
+                    Command::new("/usr/bin/osascript")
+                        .args([
+                            "-e",
+                            r#"tell application "Menubar Countdown"
+                                	set hours to "0"
+                                    set minutes to "25"
+                                 	set seconds to "0"
+                                    set play notification sound to false
+                                    set repeat alert sound to false
+                                	start timer
+                                end tell"#,
+                        ])
+                        .output()
+                        .unwrap();
                     return;
                 }
                 BoxState::Started => {
