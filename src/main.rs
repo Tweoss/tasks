@@ -1,11 +1,14 @@
+mod list;
+
 use std::{path::PathBuf, process::Command};
 
 use chrono::{DateTime, Local};
+use list::{List, ListAction};
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Constraint, Flex, Layout, Rect},
-    style::{Color, Modifier, Style},
+    layout::{Constraint, Direction, Flex, Layout, Rect},
+    style::{Color, Style, Stylize},
     text::Text,
     widgets::{Block, Cell, Clear, HighlightSpacing, Row, Table, TableState},
 };
@@ -18,7 +21,13 @@ fn main() {
         match arg.as_str() {
             "-h" | "--help" => {
                 println!(
-                    "Usage: {} [options]\nOptions:\n  -h, --help: print this help message\n  -e, --edit: edit the data file\n",
+                    "Usage: {} [options]\n\
+                     Run without options for tui.\n\n\
+                     Options:\n\
+                     \t-h, --help: print this help message\n\
+                     \t-e, --edit: edit the data file\n\
+                     \t-p, --print: print the loaded configuration\n\
+                     ",
                     args[0]
                 );
             }
@@ -29,6 +38,10 @@ fn main() {
                     .unwrap()
                     .wait()
                     .unwrap();
+            }
+            "-p" | "--print" => {
+                let config = App::load().unwrap_or_default();
+                println!("{}", config.format());
             }
             &_ => println!("Unknown command. Run with --help for more options."),
         }
@@ -44,17 +57,17 @@ fn main() {
     }
 }
 
-// const INFO_TEXT: [&str; 2] = [
-//     "(Esc) quit | (↑) move up | (↓) move down",
-//     // TODO: set timer on new box
-//     "(Shift + Enter) add new box",
-// ];
+const CHECK: &str = " ✔ ";
+const STARTED: &str = "🌟 ";
+const EMPTY: &str = " - ";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct App {
-    list: Vec<Task>,
+    #[serde(flatten)]
+    list: List,
+    completed: Vec<(Task, DateTime<Local>)>,
     #[serde(skip)]
-    save_popup: bool,
+    focus: FocusState,
     #[serde(skip)]
     should_save: bool,
     #[serde(skip)]
@@ -73,6 +86,15 @@ enum BoxState {
     Started,
     Empty,
 }
+#[derive(Default, Debug, Deserialize, Serialize, Clone, Copy)]
+enum FocusState {
+    #[default]
+    List,
+    SavePopup,
+    TaskDetails,
+    CompletedList,
+}
+
 impl App {
     fn get_path() -> Box<PathBuf> {
         let dirs = directories::ProjectDirs::from("com", "Tweoss", "Task List")
@@ -92,9 +114,9 @@ impl App {
             .ok()?;
 
         let mut app: Self = ron::from_str(&contents)
-            .map_err(|_| {
+            .map_err(|e| {
                 println!(
-                    "Failed to parse data from {}, continuing with default",
+                    "Failed to parse data, continuing with default. \nError at: {}:{e}",
                     path.display()
                 );
             })
@@ -104,15 +126,15 @@ impl App {
         Some(app)
     }
 
-    pub fn store(&mut self) {
+    pub fn store(&self) {
         let path = Self::get_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(
-            *path.clone(),
-            ron::ser::to_string_pretty(self, PrettyConfig::new()).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(*path.clone(), self.format()).unwrap();
         println!("Stored data to {}", path.display());
+    }
+
+    fn format(&self) -> String {
+        ron::ser::to_string_pretty(self, PrettyConfig::new()).unwrap()
     }
 
     fn run(&mut self, mut terminal: DefaultTerminal) {
@@ -133,64 +155,103 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        let vertical = &Layout::vertical([Constraint::Min(5), Constraint::Length(4)]);
+        let vertical = &Layout::vertical([Constraint::Max(3), Constraint::Fill(1)]);
         let rects = vertical.split(frame.area());
-        self.render_table(frame, rects[0]);
-        if self.save_popup {
-            let block = Block::bordered().title("Popup");
-            let area = self.popup_area(frame.area(), 60, 20);
-            frame.render_widget(Clear, area); //this clears out the background
-            frame.render_widget(block, area);
-            let text = Text::raw("exit and save (y/n)?\nESC to cancel");
-            let area = Self::center(
-                area,
-                Constraint::Length(text.width() as u16),
-                Constraint::Length(text.height() as u16),
-            );
-            frame.render_widget(text, area);
-        }
-    }
-    fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let selected_row_style = Style::default()
-            .add_modifier(Modifier::REVERSED)
-            .fg(Color::LightBlue);
-        let bar = " █ ";
-        const CHECK: &str = " ☑️ ";
-        const STARTED: &str = " 🌟 ";
-        const EMPTY: &str = " ➖ ";
-        let max_boxes = self.list.iter().map(|t| t.boxes.len()).max().unwrap_or(0) * CHECK.len();
-        let t = Table::new(
-            self.list.iter().map(|l| {
-                let text_cell = Cell::from("\n".to_string() + &l.text + "\n");
-                let box_cell = Cell::from(
-                    Text::raw(
-                        "\n".to_string()
-                            + &l.boxes
-                                .iter()
-                                .rev()
-                                .map(|b| match b {
-                                    BoxState::Checked(_) => CHECK,
-                                    BoxState::Started => STARTED,
-                                    BoxState::Empty => EMPTY,
-                                })
-                                .collect::<String>()
-                            + "\n",
-                    )
-                    .left_aligned(),
+        let text = Text::raw("\nTasks List. hit 1 to focus list, 2 to focus completed");
+        frame.render_widget(text, rects[0]);
+
+        let max_boxes = self
+            .list
+            .list
+            .iter()
+            .map(|t| t.boxes.len())
+            .max()
+            .unwrap_or(0)
+            * CHECK.chars().count();
+        let widths = [
+            Constraint::Percentage(100),
+            Constraint::Min(max_boxes.try_into().unwrap()),
+        ];
+
+        match self.focus {
+            FocusState::List => self.list.render(frame, rects[1]),
+            FocusState::SavePopup => {
+                self.list.render(frame, rects[1]);
+                let block = Block::bordered().title("Exit Popup");
+                let area = self.popup_area(frame.area(), 60, 20);
+                frame.render_widget(Clear, area); //this clears out the background
+                frame.render_widget(block, area);
+                let text = Text::raw("exit and save (y/n)?\nESC to cancel");
+                let area = Self::center(
+                    area,
+                    Constraint::Length(text.width() as u16),
+                    Constraint::Length(text.height() as u16),
                 );
-                Row::new(vec![text_cell, box_cell])
-                    .style(Style::new().bg(Color::Reset))
-                    .height(3)
-            }),
-            [
-                Constraint::Percentage(100),
-                Constraint::Min(max_boxes.try_into().unwrap()),
-            ],
-        )
-        .row_highlight_style(selected_row_style)
-        .highlight_symbol(Text::from(vec!["".into(), bar.into(), "".into()]))
-        .highlight_spacing(HighlightSpacing::Always)
-        .header(Row::new(vec!["Item"]));
+                frame.render_widget(text, area);
+            }
+            FocusState::TaskDetails => {
+                let layout = Layout::new(
+                    Direction::Horizontal,
+                    [Constraint::Fill(1), Constraint::Fill(1)],
+                )
+                .split(rects[1]);
+                self.list.render(frame, layout[0]);
+                // self.render_task(frame, layout[1]);
+            }
+            FocusState::CompletedList => {
+                let rows = self
+                    .completed
+                    .iter()
+                    .map(|(t, d)| {
+                        let text_cell = Cell::from("\n".to_string() + &t.text + "\n");
+                        let box_cell = Cell::from(
+                            Text::raw(
+                                "\n".to_string()
+                                    + &t.boxes
+                                        .iter()
+                                        .rev()
+                                        .map(|b| match b {
+                                            BoxState::Checked(_) => CHECK,
+                                            BoxState::Started => STARTED,
+                                            BoxState::Empty => EMPTY,
+                                        })
+                                        .collect::<String>()
+                                    + "\n",
+                            )
+                            .left_aligned(),
+                        );
+                        let completed_cell =
+                            Cell::from(d.format("\n%d/%m/%Y %H:%M").to_string()).rapid_blink();
+                        Row::new(vec![text_cell, box_cell, completed_cell])
+                            .style(Style::new().bg(Color::Reset))
+                            .height(3)
+                    })
+                    .collect::<Vec<_>>();
+                self.render_table(
+                    frame,
+                    rects[1],
+                    rows.into_iter(),
+                    &[widths[0], widths[1], Constraint::Min(17)],
+                );
+            }
+        };
+    }
+    // TODO: extract table and expanded view to reuse for completed list
+    fn render_table<'a>(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        rows: impl Iterator<Item = Row<'a>>,
+        widths: &[Constraint],
+    ) {
+        let selected_row_style = Style::default().fg(Color::White).bg(Color::Blue);
+        let bar = " █ ";
+        let t = Table::new(rows, widths)
+            .row_highlight_style(selected_row_style)
+            .highlight_symbol(Text::from(vec!["".into(), bar.into(), "".into()]))
+            .highlight_spacing(HighlightSpacing::Always)
+            .block(Block::bordered().gray())
+            .header(Row::new(vec!["Task".bold(), "Time".bold()]).bottom_margin(1));
         frame.render_stateful_widget(t, area, &mut self.table_state);
     }
     fn popup_area(&mut self, area: Rect, percent_x: u16, percent_y: u16) -> Rect {
@@ -211,8 +272,17 @@ impl App {
     }
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         // TODO: have a menu to expand a single row
-        if self.save_popup {
-            match key_event.code {
+        use ListAction as LA;
+        match self.focus {
+            FocusState::List => match (self.list.handle_key(key_event), key_event.code) {
+                (LA::Handled, _) => {}
+                (LA::MarkCompleted(i), _) => self.handle_completed(i),
+
+                (LA::Unhandled, KeyCode::Esc) => self.focus = FocusState::SavePopup,
+                (LA::Unhandled, KeyCode::Char('2')) => self.focus = FocusState::CompletedList,
+                _ => {}
+            },
+            FocusState::SavePopup => match key_event.code {
                 KeyCode::Char('y') => {
                     self.should_save = true;
                     self.exit();
@@ -221,100 +291,42 @@ impl App {
                     self.should_save = false;
                     self.exit();
                 }
-                KeyCode::Esc => self.save_popup = false,
+                KeyCode::Esc => self.focus = FocusState::List,
                 _ => {}
-            }
-            return;
-        }
-        match key_event.code {
-            KeyCode::Esc => self.save_popup = true,
-            KeyCode::Down => self.next_row(),
-            KeyCode::Up => self.prev_row(),
-            KeyCode::Char(' ') => self.handle_box_space(),
-            _ => {}
+            },
+            FocusState::TaskDetails => todo!(),
+            // TODO: separate row states
+            FocusState::CompletedList => match key_event.code {
+                KeyCode::Char('1') => self.focus = FocusState::List,
+                _ => {}
+            },
         }
     }
     fn exit(&mut self) {
         self.exit = true;
     }
 
-    fn next_row(&mut self) {
-        let i = match self.table_state.selected() {
-            Some(i) => {
-                if i >= self.list.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.table_state.select(Some(i));
-    }
-    fn prev_row(&mut self) {
-        let i = match self.table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.list.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => self.list.len() - 1,
-        };
-        self.table_state.select(Some(i));
-    }
+    // fn render_task(&mut self, frame: &mut Frame<'_>, layout: Rect) {
+    //     let Some(i) = self.table_state.selected() else {
+    //         return;
+    //     };
+    //     // TODO: have a recent context editor
+    //     let layout = Layout::new(
+    //         Direction::Vertical,
+    //         [Constraint::Length(5), Constraint::Min(0)],
+    //     )
+    //     .split(layout);
+    //     let task = &self.list[i];
+    //     let block = Block::default().title("Header").borders(Borders::ALL);
+    //     // block.
+    //     // frame.render_widget(widget, area);
+    //     // task.text
+    //     // se
+    // }
 
-    fn handle_box_space(&mut self) {
-        let Some(i) = self.table_state.selected() else {
-            return;
-        };
-        let last_mut = self.list[i].boxes.last_mut();
-        if let Some(last_mut) = last_mut {
-            match last_mut {
-                BoxState::Empty => {
-                    *last_mut = BoxState::Started;
-                    Command::new("/usr/bin/osascript")
-                        .args([
-                            "-e",
-                            r#"tell application "Menubar Countdown"
-                                	set hours to "0"
-                                    set minutes to "25"
-                                 	set seconds to "0"
-                                    set play notification sound to false
-                                    set repeat alert sound to false
-                                	start timer
-                                end tell"#,
-                        ])
-                        .output()
-                        .unwrap();
-                    return;
-                }
-                BoxState::Started => {
-                    *last_mut = BoxState::Checked(Local::now());
-                    return;
-                }
-                _ => (),
-            }
-        };
-        self.list[i].boxes.push(BoxState::Empty);
-    }
-}
-
-impl Default for App {
-    fn default() -> Self {
-        Self {
-            list: vec![
-                Task {
-                    text: "welcome".to_string(),
-                    boxes: vec![BoxState::Empty],
-                };
-                1
-            ],
-            exit: false,
-            table_state: TableState::default(),
-            save_popup: false,
-            should_save: false,
-        }
+    fn handle_completed(&mut self, i: usize) {
+        let task = self.list.list.remove(i);
+        let time = Local::now();
+        self.completed.push((task, time));
     }
 }
