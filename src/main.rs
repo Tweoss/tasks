@@ -1,9 +1,11 @@
 mod list;
+mod popup;
 
 use std::{path::PathBuf, process::Command};
 
 use chrono::{DateTime, Local};
 use list::{List, ListAction};
+use popup::{Popup, PopupAction};
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
@@ -52,9 +54,6 @@ fn main() {
     let terminal = ratatui::init();
     app.run(terminal);
     ratatui::restore();
-    if app.should_save {
-        app.store();
-    }
 }
 
 const CHECK: &str = " ✔ ";
@@ -65,11 +64,10 @@ const EMPTY: &str = " - ";
 pub struct App {
     #[serde(flatten)]
     list: List,
+    popup: Popup,
     completed: Vec<(Task, DateTime<Local>)>,
     #[serde(skip)]
     focus: FocusState,
-    #[serde(skip)]
-    should_save: bool,
     #[serde(skip)]
     exit: bool,
     #[serde(skip)]
@@ -130,7 +128,6 @@ impl App {
         let path = Self::get_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(*path.clone(), self.format()).unwrap();
-        println!("Stored data to {}", path.display());
     }
 
     fn format(&self) -> String {
@@ -177,17 +174,7 @@ impl App {
             FocusState::List => self.list.render(frame, rects[1]),
             FocusState::SavePopup => {
                 self.list.render(frame, rects[1]);
-                let block = Block::bordered().title("Exit Popup");
-                let area = self.popup_area(frame.area(), 60, 20);
-                frame.render_widget(Clear, area); //this clears out the background
-                frame.render_widget(block, area);
-                let text = Text::raw("exit and save (y/n)?\nESC to cancel");
-                let area = Self::center(
-                    area,
-                    Constraint::Length(text.width() as u16),
-                    Constraint::Length(text.height() as u16),
-                );
-                frame.render_widget(text, area);
+                self.popup.render(frame, frame.area());
             }
             FocusState::TaskDetails => {
                 let layout = Layout::new(
@@ -222,7 +209,7 @@ impl App {
                         );
                         let completed_cell =
                             Cell::from(d.format("\n%d/%m/%Y %H:%M").to_string()).rapid_blink();
-                        Row::new(vec![text_cell, box_cell, completed_cell])
+                        Row::new(vec![text_cell, completed_cell, box_cell])
                             .style(Style::new().bg(Color::Reset))
                             .height(3)
                     })
@@ -231,7 +218,7 @@ impl App {
                     frame,
                     rects[1],
                     rows.into_iter(),
-                    &[widths[0], widths[1], Constraint::Min(17)],
+                    &[widths[0], Constraint::Min(17), widths[1]],
                 );
             }
         };
@@ -251,15 +238,11 @@ impl App {
             .highlight_symbol(Text::from(vec!["".into(), bar.into(), "".into()]))
             .highlight_spacing(HighlightSpacing::Always)
             .block(Block::bordered().gray())
-            .header(Row::new(vec!["Task".bold(), "Time".bold()]).bottom_margin(1));
+            .header(
+                Row::new(vec!["Task".bold(), "Completed At".bold(), "Time".bold()])
+                    .bottom_margin(1),
+            );
         frame.render_stateful_widget(t, area, &mut self.table_state);
-    }
-    fn popup_area(&mut self, area: Rect, percent_x: u16, percent_y: u16) -> Rect {
-        let vertical = Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center);
-        let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
-        let [area] = vertical.areas(area);
-        let [area] = horizontal.areas(area);
-        area
     }
 
     fn handle_events(&mut self) {
@@ -273,6 +256,7 @@ impl App {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         // TODO: have a menu to expand a single row
         use ListAction as LA;
+        use PopupAction as PU;
         match self.focus {
             FocusState::List => match (self.list.handle_key(key_event), key_event.code) {
                 (LA::Handled, _) => {}
@@ -280,19 +264,21 @@ impl App {
 
                 (LA::Unhandled, KeyCode::Esc) => self.focus = FocusState::SavePopup,
                 (LA::Unhandled, KeyCode::Char('2')) => self.focus = FocusState::CompletedList,
-                _ => {}
+                (LA::Unhandled, _) => {}
             },
-            FocusState::SavePopup => match key_event.code {
-                KeyCode::Char('y') => {
-                    self.should_save = true;
+            FocusState::SavePopup => match (self.popup.handle_key(key_event), key_event.code) {
+                (PU::Handled, _) => {}
+                (PU::ExitNoWrite, _) => self.exit(),
+                (PU::Write, _) => {
+                    self.store();
+                    self.focus = FocusState::List;
+                }
+                (PU::Exit, _) => {
+                    self.store();
                     self.exit();
                 }
-                KeyCode::Char('n') => {
-                    self.should_save = false;
-                    self.exit();
-                }
-                KeyCode::Esc => self.focus = FocusState::List,
-                _ => {}
+                (PU::Unhandled, KeyCode::Esc) => self.focus = FocusState::List,
+                (PU::Unhandled, _) => {}
             },
             FocusState::TaskDetails => todo!(),
             // TODO: separate row states
