@@ -56,8 +56,9 @@ impl List {
             .collect::<Vec<_>>();
 
         const TIME: &str = "Time";
-        let max_boxes = self.list.iter().map(|t| t.boxes.len()).max().unwrap_or(0)
-            * CHECK.chars().count().max(TIME.chars().count());
+        let max_boxes = (self.list.iter().map(|t| t.boxes.len()).max().unwrap_or(0)
+            * CHECK.chars().count())
+        .max(TIME.chars().count() + 1);
         let widths = [
             Constraint::Percentage(100),
             Constraint::Min(max_boxes.try_into().unwrap()),
