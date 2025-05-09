@@ -3,7 +3,7 @@ use std::process::Command;
 use chrono::Local;
 use ratatui::{
     Frame,
-    crossterm::event::{KeyCode, KeyEvent},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Rect},
     style::{Color, Style, Stylize},
     text::Text,
@@ -55,8 +55,9 @@ impl List {
             })
             .collect::<Vec<_>>();
 
-        let max_boxes =
-            self.list.iter().map(|t| t.boxes.len()).max().unwrap_or(0) * CHECK.chars().count();
+        const TIME: &str = "Time";
+        let max_boxes = self.list.iter().map(|t| t.boxes.len()).max().unwrap_or(0)
+            * CHECK.chars().count().max(TIME.chars().count());
         let widths = [
             Constraint::Percentage(100),
             Constraint::Min(max_boxes.try_into().unwrap()),
@@ -71,7 +72,7 @@ impl List {
         .highlight_symbol(Text::from(vec!["".into(), bar.into(), "".into()]))
         .highlight_spacing(HighlightSpacing::Always)
         .block(Block::bordered().gray())
-        .header(Row::new(vec!["Task".bold(), "Time".bold()]).bottom_margin(1));
+        .header(Row::new(vec!["Task".bold(), TIME.bold()]).bottom_margin(1));
         frame.render_stateful_widget(t, area, &mut self.table_state);
     }
 
@@ -79,7 +80,10 @@ impl List {
         match key_event.code {
             KeyCode::Down => self.next_row(),
             KeyCode::Up => self.prev_row(),
-            KeyCode::Char(' ') => self.handle_box_space(),
+            KeyCode::Char(' ') if key_event.modifiers.contains(KeyModifiers::ALT) => {
+                self.handle_new_empty()
+            }
+            KeyCode::Char(' ') => self.handle_box_step(),
             KeyCode::Char('F') => {
                 if let Some(i) = self.table_state.selected() {
                     return ListAction::MarkCompleted(i);
@@ -117,11 +121,21 @@ impl List {
         self.table_state.select(Some(i));
     }
 
-    fn handle_box_space(&mut self) {
+    fn handle_new_empty(&mut self) {
         let Some(i) = self.table_state.selected() else {
             return;
         };
-        let last_mut = self.list[i].boxes.last_mut();
+        self.list[i].boxes.push(BoxState::Empty);
+    }
+
+    fn handle_box_step(&mut self) {
+        let Some(i) = self.table_state.selected() else {
+            return;
+        };
+        let last_mut = self.list[i]
+            .boxes
+            .iter_mut()
+            .find(|b| !matches!(b, BoxState::Checked(_)));
         if let Some(last_mut) = last_mut {
             match last_mut {
                 BoxState::Empty => {
@@ -140,15 +154,10 @@ impl List {
                         ])
                         .output()
                         .unwrap();
-                    return;
                 }
-                BoxState::Started => {
-                    *last_mut = BoxState::Checked(Local::now());
-                    return;
-                }
+                BoxState::Started => *last_mut = BoxState::Checked(Local::now()),
                 _ => (),
             }
         };
-        self.list[i].boxes.push(BoxState::Empty);
     }
 }
