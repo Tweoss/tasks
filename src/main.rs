@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Constraint, Direction, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Text,
-    widgets::{Block, Cell, Clear, HighlightSpacing, Row, Table, TableState},
+    widgets::{Block, Cell, HighlightSpacing, Row, Table, TableState},
 };
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
@@ -158,10 +158,9 @@ impl App {
         frame.render_widget(text, rects[0]);
 
         let max_boxes = self
-            .list
-            .list
+            .completed
             .iter()
-            .map(|t| t.boxes.len())
+            .map(|t| t.0.boxes.len())
             .max()
             .unwrap_or(0)
             * CHECK.chars().count();

@@ -32,26 +32,24 @@ impl List {
             .list
             .iter()
             .map(|l| {
-                let text_cell = Cell::from("\n".to_string() + &l.text + "\n").gray();
+                let text_cell = Cell::from(l.text.clone()).gray();
                 let box_cell = Cell::from(
                     Text::raw(
-                        "\n".to_string()
-                            + &l.boxes
-                                .iter()
-                                .rev()
-                                .map(|b| match b {
-                                    BoxState::Checked(_) => CHECK,
-                                    BoxState::Started => STARTED,
-                                    BoxState::Empty => EMPTY,
-                                })
-                                .collect::<String>()
-                            + "\n",
+                        l.boxes
+                            .iter()
+                            .rev()
+                            .map(|b| match b {
+                                BoxState::Checked(_) => CHECK,
+                                BoxState::Started => STARTED,
+                                BoxState::Empty => EMPTY,
+                            })
+                            .collect::<String>(),
                     )
                     .left_aligned(),
                 );
                 Row::new(vec![text_cell, box_cell])
                     .style(Style::new().bg(Color::Reset))
-                    .height(3)
+                    .height(1)
             })
             .collect::<Vec<_>>();
 
@@ -64,16 +62,16 @@ impl List {
             Constraint::Min(max_boxes.try_into().unwrap()),
         ];
         let selected_row_style = Style::default().fg(Color::White).bg(Color::Blue);
-        let bar = " █ ";
+        let bar = "█ ";
         let t = Table::new(
             rows, // TODO: handle?
             widths,
         )
         .row_highlight_style(selected_row_style)
-        .highlight_symbol(Text::from(vec!["".into(), bar.into(), "".into()]))
+        .highlight_symbol(Text::from(bar))
         .highlight_spacing(HighlightSpacing::Always)
         .block(Block::bordered().gray())
-        .header(Row::new(vec!["Task".bold(), TIME.bold()]).bottom_margin(1));
+        .header(Row::new(vec!["Task".bold(), TIME.bold()]));
         frame.render_stateful_widget(t, area, &mut self.table_state);
     }
 
@@ -81,10 +79,11 @@ impl List {
         match key_event.code {
             KeyCode::Down => self.next_row(),
             KeyCode::Up => self.prev_row(),
+            KeyCode::Backspace => self.remove_empty(),
             KeyCode::Char(' ') if key_event.modifiers.contains(KeyModifiers::ALT) => {
-                self.handle_new_empty()
+                self.handle_box_step()
             }
-            KeyCode::Char(' ') => self.handle_box_step(),
+            KeyCode::Char(' ') => self.handle_new_empty(),
             KeyCode::Char('F') => {
                 if let Some(i) = self.table_state.selected() {
                     return ListAction::MarkCompleted(i);
@@ -160,5 +159,19 @@ impl List {
                 _ => (),
             }
         };
+    }
+
+    fn remove_empty(&mut self) {
+        let Some(i) = self.table_state.selected() else {
+            return;
+        };
+        let Some(box_i) = self.list[i]
+            .boxes
+            .iter()
+            .rposition(|b| matches!(b, BoxState::Empty))
+        else {
+            return;
+        };
+        self.list[i].boxes.remove(box_i);
     }
 }
