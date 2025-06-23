@@ -1,22 +1,47 @@
-mod list;
 mod popup;
 
 use std::{path::PathBuf, process::Command};
 
 use chrono::{DateTime, Local};
-use list::{List, ListAction};
 use popup::{Popup, PopupAction};
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Constraint, Direction, Flex, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Text,
-    widgets::{Block, Cell, HighlightSpacing, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, HighlightSpacing, Row, Table, TableState},
 };
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
 
+// Main Window
+//
+// --------------------------------------
+// filter expression (default: not completed)
+// --------------------------------------
+// task list    | focused task details:
+//              | - creation date
+//              | - scrollable list of boxes (ticked with dates, pending)
+//              | - scrollable text box for context
+//              | - completed date if exists
+//              | - deletion menu
+//
+//
+// dialog for adding new task
+// - name
+//   (whether or not satisfies current filter)
+
+// filter expression grammar:
+// filter = '(' delimited(filter, '|') ')' | '(' delimited(filter, '&') ')' | 'not' filter | existence | comparison
+// existence = 'completed' | 'ticked'[i]
+// comparison = value operator reference
+// value = 'created' | 'completed' | 'ticked'[i]
+// operator = '>=' | '<=' | '='
+// reference = date | 'today' | 'yesterday'
+//
+// maybe in future also, 'name' 'contains' string
+//
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     if let Some(arg) = args.get(1) {
@@ -56,16 +81,16 @@ fn main() {
     ratatui::restore();
 }
 
-const CHECK: &str = " ✔ ";
-const STARTED: &str = "🌟 ";
-const EMPTY: &str = " - ";
+const CHECK: &str = " ✔";
+const STARTED: &str = "🌟";
+const EMPTY: &str = " -";
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+type Date = DateTime<Local>;
+#[derive(Debug, Deserialize, Serialize)]
 pub struct App {
-    #[serde(flatten)]
-    list: List,
+    tasks: Vec<Task>,
     popup: Popup,
-    completed: Vec<(Task, DateTime<Local>)>,
+    visible: Vec<usize>,
     #[serde(skip)]
     focus: FocusState,
     #[serde(skip)]
@@ -73,10 +98,34 @@ pub struct App {
     #[serde(skip)]
     table_state: TableState,
 }
+
+impl Default for App {
+    fn default() -> Self {
+        let tasks = vec![Task {
+            created: Local::now(),
+            title: "whoop".to_string(),
+            boxes: vec![],
+            context: String::new(),
+            completed: Some(Local::now()),
+        }];
+        Self {
+            tasks: tasks.clone(),
+            popup: Popup {},
+            visible: (0..tasks.len()).collect(),
+            focus: FocusState::List,
+            exit: false,
+            table_state: TableState::new(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct Task {
-    text: String,
+    created: Date,
     boxes: Vec<BoxState>,
+    title: String,
+    context: String,
+    completed: Option<Date>,
 }
 #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
 enum BoxState {
@@ -84,13 +133,19 @@ enum BoxState {
     Started,
     Empty,
 }
-#[derive(Default, Debug, Deserialize, Serialize, Clone, Copy)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 enum FocusState {
+    Filter,
     #[default]
     List,
-    SavePopup,
-    TaskDetails,
-    CompletedList,
+    Task(TaskFocus),
+    WritePopup,
+}
+#[derive(Debug, Deserialize, Serialize, Clone)]
+enum TaskFocus {
+    Boxes,
+    Context,
+    Deletion,
 }
 
 impl App {
@@ -143,98 +198,63 @@ impl App {
             }
         }
     }
-    fn center(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
-        let [area] = Layout::horizontal([horizontal])
-            .flex(Flex::Center)
-            .areas(area);
-        let [area] = Layout::vertical([vertical]).flex(Flex::Center).areas(area);
-        area
-    }
-
     fn draw(&mut self, frame: &mut Frame) {
-        let vertical = &Layout::vertical([Constraint::Max(3), Constraint::Fill(1)]);
-        let rects = vertical.split(frame.area());
-        let text = Text::raw("\nTasks List. hit 1 to focus list, 2 to focus completed");
-        frame.render_widget(text, rects[0]);
-
+        let task_split = Layout::horizontal(Constraint::from_fills([1, 1])).split(frame.area());
+        self.draw_visible(frame, task_split[0]);
+        self.draw_selected(frame, task_split[1]);
+        if matches!(self.focus, FocusState::WritePopup) {
+            self.popup.render(frame, frame.area());
+        }
+    }
+    fn draw_visible(&mut self, frame: &mut Frame, area: Rect) {
         let max_boxes = self
-            .completed
+            .visible
             .iter()
-            .map(|t| t.0.boxes.len())
+            .map(|t| self.tasks[*t].boxes.len())
             .max()
             .unwrap_or(0)
             * CHECK.chars().count();
-        let widths = [
-            Constraint::Percentage(100),
+        let list_split = [
+            Constraint::Fill(1),
+            Constraint::Min(17),
             Constraint::Min(max_boxes.try_into().unwrap()),
         ];
-
-        match self.focus {
-            FocusState::List => self.list.render(frame, rects[1]),
-            FocusState::SavePopup => {
-                self.list.render(frame, rects[1]);
-                self.popup.render(frame, frame.area());
-            }
-            FocusState::TaskDetails => {
-                let layout = Layout::new(
-                    Direction::Horizontal,
-                    [Constraint::Fill(1), Constraint::Fill(1)],
+        let rows = self
+            .visible
+            .iter()
+            .map(|t| {
+                let text_cell = Cell::from(self.tasks[*t].title.clone());
+                let completed_cell = Cell::from(
+                    self.tasks[*t]
+                        .completed
+                        .map(|d| d.format("%Y-%m-%m %H:%M").to_string())
+                        .unwrap_or_default(),
                 )
-                .split(rects[1]);
-                self.list.render(frame, layout[0]);
-                // self.render_task(frame, layout[1]);
-            }
-            FocusState::CompletedList => {
-                let rows = self
-                    .completed
-                    .iter()
-                    .map(|(t, d)| {
-                        let text_cell = Cell::from("\n".to_string() + &t.text + "\n");
-                        let box_cell = Cell::from(
-                            Text::raw(
-                                "\n".to_string()
-                                    + &t.boxes
-                                        .iter()
-                                        .rev()
-                                        .map(|b| match b {
-                                            BoxState::Checked(_) => CHECK,
-                                            BoxState::Started => STARTED,
-                                            BoxState::Empty => EMPTY,
-                                        })
-                                        .collect::<String>()
-                                    + "\n",
-                            )
-                            .left_aligned(),
-                        );
-                        let completed_cell =
-                            Cell::from(d.format("\n%d/%m/%Y %H:%M").to_string()).rapid_blink();
-                        Row::new(vec![text_cell, completed_cell, box_cell])
-                            .style(Style::new().bg(Color::Reset))
-                            .height(3)
-                    })
-                    .collect::<Vec<_>>();
-                self.render_table(
-                    frame,
-                    rects[1],
-                    rows.into_iter(),
-                    &[widths[0], Constraint::Min(17), widths[1]],
+                .rapid_blink();
+                let box_cell = Cell::from(
+                    Text::raw(
+                        self.tasks[*t]
+                            .boxes
+                            .iter()
+                            .rev()
+                            .map(|b| match b {
+                                BoxState::Checked(_) => CHECK,
+                                BoxState::Started => STARTED,
+                                BoxState::Empty => EMPTY,
+                            })
+                            .collect::<String>(),
+                    )
+                    .left_aligned(),
                 );
-            }
-        };
-    }
-    // TODO: extract table and expanded view to reuse for completed list
-    fn render_table<'a>(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        rows: impl Iterator<Item = Row<'a>>,
-        widths: &[Constraint],
-    ) {
+                Row::new(vec![text_cell, completed_cell, box_cell])
+                    .style(Style::new().bg(Color::Reset))
+            })
+            .collect::<Vec<_>>();
         let selected_row_style = Style::default().fg(Color::White).bg(Color::Blue);
         let bar = " █ ";
-        let t = Table::new(rows, widths)
+        let t = Table::new(rows, list_split.iter())
             .row_highlight_style(selected_row_style)
-            .highlight_symbol(Text::from(vec!["".into(), bar.into(), "".into()]))
+            .highlight_symbol(Text::from(bar))
             .highlight_spacing(HighlightSpacing::Always)
             .block(Block::bordered().gray())
             .header(
@@ -243,7 +263,22 @@ impl App {
             );
         frame.render_stateful_widget(t, area, &mut self.table_state);
     }
-
+    fn draw_selected(&mut self, frame: &mut Frame, area: Rect) {
+        let surrounding_block = Block::default()
+            .borders(Borders::ALL)
+            .title("Selected Task");
+        if let Some(v) = self
+            .visible
+            .get(*self.table_state.selected_mut().get_or_insert_default())
+        {
+            frame.render_widget(
+                Text::raw(self.tasks[*v].title.clone()),
+                surrounding_block.inner(area),
+            );
+            frame.render_widget(surrounding_block, area);
+            // TODO: draw task
+        }
+    }
     fn handle_events(&mut self) {
         match event::read().unwrap() {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
@@ -254,18 +289,23 @@ impl App {
     }
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         // TODO: have a menu to expand a single row
-        use ListAction as LA;
         use PopupAction as PU;
         match self.focus {
-            FocusState::List => match (self.list.handle_key(key_event), key_event.code) {
-                (LA::Handled, _) => {}
-                (LA::MarkCompleted(i), _) => self.handle_completed(i),
-
-                (LA::Unhandled, KeyCode::Esc) => self.focus = FocusState::SavePopup,
-                (LA::Unhandled, KeyCode::Char('2')) => self.focus = FocusState::CompletedList,
-                (LA::Unhandled, _) => {}
+            FocusState::List => match key_event.code {
+                KeyCode::Down => self.next_row(),
+                KeyCode::Up => self.prev_row(),
+                KeyCode::Char('q') => self.focus = FocusState::WritePopup,
+                KeyCode::Char('a') => self.handle_new_empty(),
+                KeyCode::Backspace => self.remove_empty(),
+                KeyCode::Char('N') => self.handle_box_step(),
+                KeyCode::Char('F') => {
+                    if let Some(i) = self.table_state.selected() {
+                        self.tasks[self.visible[i]].completed = Some(Local::now());
+                    }
+                }
+                _ => {} // (LA::Unhandled, KeyCode::Esc) => self.focus = FocusState::SavePopup,
             },
-            FocusState::SavePopup => match (self.popup.handle_key(key_event), key_event.code) {
+            FocusState::WritePopup => match (self.popup.handle_key(key_event), key_event.code) {
                 (PU::Handled, _) => {}
                 (PU::ExitNoWrite, _) => self.exit(),
                 (PU::Write, _) => {
@@ -279,39 +319,92 @@ impl App {
                 (PU::Unhandled, KeyCode::Esc) => self.focus = FocusState::List,
                 (PU::Unhandled, _) => {}
             },
-            FocusState::TaskDetails => todo!(),
-            // TODO: separate row states
-            FocusState::CompletedList => match key_event.code {
-                KeyCode::Char('1') => self.focus = FocusState::List,
-                _ => {}
-            },
+            FocusState::Task(_) => todo!(),
+            _ => {}
         }
     }
-    fn exit(&mut self) {
-        self.exit = true;
+    fn next_row(&mut self) {
+        let i = match self.table_state.selected() {
+            Some(i) => {
+                if i >= self.visible.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.table_state.select(Some(i));
+    }
+    fn prev_row(&mut self) {
+        let i = match self.table_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.visible.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => self.visible.len() - 1,
+        };
+        self.table_state.select(Some(i));
     }
 
-    // fn render_task(&mut self, frame: &mut Frame<'_>, layout: Rect) {
-    //     let Some(i) = self.table_state.selected() else {
-    //         return;
-    //     };
-    //     // TODO: have a recent context editor
-    //     let layout = Layout::new(
-    //         Direction::Vertical,
-    //         [Constraint::Length(5), Constraint::Min(0)],
-    //     )
-    //     .split(layout);
-    //     let task = &self.list[i];
-    //     let block = Block::default().title("Header").borders(Borders::ALL);
-    //     // block.
-    //     // frame.render_widget(widget, area);
-    //     // task.text
-    //     // se
-    // }
+    fn handle_new_empty(&mut self) {
+        let Some(i) = self.table_state.selected() else {
+            return;
+        };
+        self.tasks[self.visible[i]].boxes.push(BoxState::Empty);
+    }
 
-    fn handle_completed(&mut self, i: usize) {
-        let task = self.list.list.remove(i);
-        let time = Local::now();
-        self.completed.push((task, time));
+    fn handle_box_step(&mut self) {
+        let Some(i) = self.table_state.selected() else {
+            return;
+        };
+        let last_mut = self.tasks[self.visible[i]]
+            .boxes
+            .iter_mut()
+            .find(|b| !matches!(b, BoxState::Checked(_)));
+        if let Some(last_mut) = last_mut {
+            match last_mut {
+                BoxState::Empty => {
+                    *last_mut = BoxState::Started;
+                    Command::new("/usr/bin/osascript")
+                        .args([
+                            "-e",
+                            r#"tell application "Menubar Countdown"
+                                	set hours to "0"
+                                    set minutes to "25"
+                                 	set seconds to "0"
+                                    set play notification sound to false
+                                    set repeat alert sound to false
+                                	start timer
+                                end tell"#,
+                        ])
+                        .output()
+                        .unwrap();
+                }
+                BoxState::Started => *last_mut = BoxState::Checked(Local::now()),
+                _ => (),
+            }
+        };
+    }
+
+    fn remove_empty(&mut self) {
+        let Some(i) = self.table_state.selected() else {
+            return;
+        };
+        let Some(box_i) = self.tasks[self.visible[i]]
+            .boxes
+            .iter()
+            .rposition(|b| matches!(b, BoxState::Empty))
+        else {
+            return;
+        };
+        self.tasks[self.visible[i]].boxes.remove(box_i);
+    }
+
+    fn exit(&mut self) {
+        self.exit = true;
     }
 }

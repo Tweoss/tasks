@@ -7,8 +7,6 @@ use ratatui::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::App;
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Popup {}
 pub enum PopupAction {
@@ -31,12 +29,13 @@ impl Popup {
         let [area] = horizontal.areas(area);
         frame.render_widget(Clear, area); //this clears out the background
         frame.render_widget(block, area);
-        let text = Text::raw("write (w), write and exit(y), exit(n)\nESC to cancel");
-        let area = App::center(
-            area,
-            Constraint::Length(text.width() as u16),
-            Constraint::Length(text.height() as u16),
-        );
+        let text = Text::raw("write(w), write and exit(y), exit(n)\nESC to cancel");
+        let [area] = Layout::horizontal([Constraint::Length(text.width() as u16)])
+            .flex(Flex::Center)
+            .areas(area);
+        let [area] = Layout::vertical([Constraint::Length(text.height() as u16)])
+            .flex(Flex::Center)
+            .areas(area);
         frame.render_widget(text, area);
     }
 
