@@ -1,25 +1,24 @@
+use chrono::Local;
 use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Flex, Layout, Rect},
-    text::Text,
+    text::{self, Text},
     widgets::{Block, Clear},
 };
 use serde::{Deserialize, Serialize};
+use tui_textarea::TextArea;
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub struct Popup {}
-pub enum PopupAction {
-    Unhandled,
-    Handled,
-    ExitNoWrite,
-    Write,
-    Exit,
-}
+use crate::Task;
 
-impl Popup {
-    pub fn render(&mut self, frame: &mut Frame, area: Rect) {
-        let block = Block::bordered().title("Exit Popup");
+pub trait Popup {
+    const TITLE: &str;
+    type Action;
+    fn draw_in_rect(&mut self, frame: &mut Frame, area: Rect);
+    fn get_dimensions(&self, available_area: Rect) -> (u16, u16);
+
+    fn render(&mut self, frame: &mut Frame, area: Rect) {
+        let block = Block::bordered().title(Self::TITLE);
 
         let percent_x = 60;
         let percent_y = 20;
@@ -27,24 +26,98 @@ impl Popup {
         let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
         let [area] = vertical.areas(area);
         let [area] = horizontal.areas(area);
+        let (width, height) = self.get_dimensions(block.inner(area));
         frame.render_widget(Clear, area); //this clears out the background
         frame.render_widget(block, area);
-        let text = Text::raw("write(w), write and exit(y), exit(n)\nESC to cancel");
-        let [area] = Layout::horizontal([Constraint::Length(text.width() as u16)])
+        let [area] = Layout::horizontal([Constraint::Length(width)])
             .flex(Flex::Center)
             .areas(area);
-        let [area] = Layout::vertical([Constraint::Length(text.height() as u16)])
+        let [area] = Layout::vertical([Constraint::Length(height)])
             .flex(Flex::Center)
             .areas(area);
-        frame.render_widget(text, area);
+        self.draw_in_rect(frame, area);
     }
 
-    pub fn handle_key(&mut self, key_event: KeyEvent) -> PopupAction {
+    fn handle_key(&mut self, key_event: KeyEvent) -> Self::Action;
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct SaveDialog {}
+pub enum SaveAction {
+    Unhandled,
+    ExitNoWrite,
+    Write,
+    Exit,
+}
+
+const POPUP_TEXT: &str = "write(w), write and exit(y), exit(n)\nESC to cancel";
+
+impl Popup for SaveDialog {
+    const TITLE: &str = "Exit Popup";
+    type Action = SaveAction;
+
+    fn draw_in_rect(&mut self, frame: &mut Frame, area: Rect) {
+        frame.render_widget(
+            Text::raw("write(w), write and exit(y), exit(n)\nESC to cancel"),
+            area,
+        );
+    }
+
+    fn get_dimensions(&self, _: Rect) -> (u16, u16) {
+        (
+            POPUP_TEXT.lines().map(|l| l.chars().count()).max().unwrap() as u16,
+            POPUP_TEXT.lines().count() as u16,
+        )
+    }
+
+    fn handle_key(&mut self, key_event: KeyEvent) -> SaveAction {
         match key_event.code {
-            KeyCode::Char('y') => PopupAction::Exit,
-            KeyCode::Char('n') => PopupAction::ExitNoWrite,
-            KeyCode::Char('w') => PopupAction::Write,
-            _ => PopupAction::Unhandled,
+            KeyCode::Char('y') => SaveAction::Exit,
+            KeyCode::Char('n') => SaveAction::ExitNoWrite,
+            KeyCode::Char('w') => SaveAction::Write,
+            _ => SaveAction::Unhandled,
+        }
+    }
+}
+
+#[derive(Clone, Default, Debug, Deserialize, Serialize)]
+pub struct AddDialog<'a> {
+    #[serde(skip)]
+    textbox: Box<TextArea<'a>>,
+}
+pub enum AddAction {
+    Exit,
+    Add(Task),
+}
+
+impl Popup for AddDialog<'_> {
+    const TITLE: &'static str = "Add New Task";
+    type Action = Option<AddAction>;
+
+    fn draw_in_rect(&mut self, frame: &mut Frame, area: Rect) {
+        frame.render_widget(self.textbox.as_ref(), area);
+    }
+
+    fn get_dimensions(&self, available_area: Rect) -> (u16, u16) {
+        (available_area.width, available_area.height)
+    }
+
+    fn handle_key(&mut self, key_event: KeyEvent) -> Self::Action {
+        match key_event.code {
+            KeyCode::Enter => self.textbox.lines().first().map(|title| {
+                AddAction::Add(Task {
+                    created: Local::now(),
+                    boxes: vec![],
+                    title: title.to_string(),
+                    context: String::new(),
+                    completed: None,
+                })
+            }),
+            KeyCode::Esc => Some(AddAction::Exit),
+            _ => {
+                self.textbox.input(key_event);
+                None
+            }
         }
     }
 }

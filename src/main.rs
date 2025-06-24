@@ -3,7 +3,7 @@ mod popup;
 use std::{path::PathBuf, process::Command};
 
 use chrono::{DateTime, Local};
-use popup::{Popup, PopupAction};
+use popup::{AddAction, AddDialog, Popup, SaveAction, SaveDialog};
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
@@ -14,6 +14,7 @@ use ratatui::{
 };
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
+use tui_textarea::TextArea;
 
 // Main Window
 //
@@ -87,19 +88,18 @@ const EMPTY: &str = " -";
 
 type Date = DateTime<Local>;
 #[derive(Debug, Deserialize, Serialize)]
-pub struct App {
+pub struct App<'a> {
     tasks: Vec<Task>,
-    popup: Popup,
     visible: Vec<usize>,
     #[serde(skip)]
-    focus: FocusState,
+    focus: FocusState<'a>,
     #[serde(skip)]
     exit: bool,
     #[serde(skip)]
     table_state: TableState,
 }
 
-impl Default for App {
+impl Default for App<'_> {
     fn default() -> Self {
         let tasks = vec![Task {
             created: Local::now(),
@@ -110,7 +110,6 @@ impl Default for App {
         }];
         Self {
             tasks: tasks.clone(),
-            popup: Popup {},
             visible: (0..tasks.len()).collect(),
             focus: FocusState::List,
             exit: false,
@@ -134,12 +133,13 @@ enum BoxState {
     Empty,
 }
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
-enum FocusState {
+enum FocusState<'a> {
     Filter,
     #[default]
     List,
     Task(TaskFocus),
-    WritePopup,
+    WritePopup(SaveDialog),
+    AddNew(AddDialog<'a>),
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 enum TaskFocus {
@@ -148,7 +148,7 @@ enum TaskFocus {
     Deletion,
 }
 
-impl App {
+impl App<'_> {
     fn get_path() -> Box<PathBuf> {
         let dirs = directories::ProjectDirs::from("com", "Tweoss", "Task List")
             .clone()
@@ -202,8 +202,12 @@ impl App {
         let task_split = Layout::horizontal(Constraint::from_fills([1, 1])).split(frame.area());
         self.draw_visible(frame, task_split[0]);
         self.draw_selected(frame, task_split[1]);
-        if matches!(self.focus, FocusState::WritePopup) {
-            self.popup.render(frame, frame.area());
+        match &mut self.focus {
+            FocusState::WritePopup(save) => save.render(frame, frame.area()),
+            FocusState::Filter => todo!(),
+            FocusState::List => {}
+            FocusState::Task(task_focus) => {}
+            FocusState::AddNew(add) => add.render(frame, frame.area()),
         }
     }
     fn draw_visible(&mut self, frame: &mut Frame, area: Rect) {
@@ -288,39 +292,51 @@ impl App {
         };
     }
     fn handle_key_event(&mut self, key_event: KeyEvent) {
-        // TODO: have a menu to expand a single row
-        use PopupAction as PU;
+        use AddAction as AA;
+        use SaveAction as SA;
         match self.focus {
             FocusState::List => match key_event.code {
                 KeyCode::Down => self.next_row(),
                 KeyCode::Up => self.prev_row(),
-                KeyCode::Char('q') => self.focus = FocusState::WritePopup,
-                KeyCode::Char('a') => self.handle_new_empty(),
-                KeyCode::Backspace => self.remove_empty(),
+                KeyCode::Char('q') => self.focus = FocusState::WritePopup(SaveDialog {}),
+                KeyCode::Char('n') => self.handle_new_empty(),
                 KeyCode::Char('N') => self.handle_box_step(),
+                KeyCode::Char('A') => self.focus = FocusState::AddNew(Default::default()),
+                KeyCode::Backspace => self.remove_empty(),
                 KeyCode::Char('F') => {
                     if let Some(i) = self.table_state.selected() {
                         self.tasks[self.visible[i]].completed = Some(Local::now());
                     }
                 }
-                _ => {} // (LA::Unhandled, KeyCode::Esc) => self.focus = FocusState::SavePopup,
+                _ => {}
             },
-            FocusState::WritePopup => match (self.popup.handle_key(key_event), key_event.code) {
-                (PU::Handled, _) => {}
-                (PU::ExitNoWrite, _) => self.exit(),
-                (PU::Write, _) => {
-                    self.store();
+            FocusState::WritePopup(ref mut save) => {
+                match (save.handle_key(key_event), key_event.code) {
+                    (SA::ExitNoWrite, _) => self.exit(),
+                    (SA::Write, _) => {
+                        self.store();
+                        self.focus = FocusState::List;
+                    }
+                    (SA::Exit, _) => {
+                        self.store();
+                        self.exit();
+                    }
+                    (SA::Unhandled, KeyCode::Esc) => self.focus = FocusState::List,
+                    (SA::Unhandled, _) => {}
+                }
+            }
+            FocusState::Task(_) => todo!(),
+            FocusState::AddNew(ref mut add) => match (add.handle_key(key_event), key_event.code) {
+                (Some(AA::Exit), _) => self.focus = FocusState::List,
+                (Some(AA::Add(t)), _) => {
+                    // TODO: properly recalculate visible
+                    self.visible.push(self.tasks.len());
+                    self.tasks.push(t);
                     self.focus = FocusState::List;
                 }
-                (PU::Exit, _) => {
-                    self.store();
-                    self.exit();
-                }
-                (PU::Unhandled, KeyCode::Esc) => self.focus = FocusState::List,
-                (PU::Unhandled, _) => {}
+                (None, _) => {}
             },
-            FocusState::Task(_) => todo!(),
-            _ => {}
+            FocusState::Filter => todo!(),
         }
     }
     fn next_row(&mut self) {
