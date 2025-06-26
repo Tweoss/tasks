@@ -7,7 +7,7 @@ use popup::{AddAction, AddDialog, Popup, SaveAction, SaveDialog};
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Text,
     widgets::{Block, Borders, Cell, HighlightSpacing, Row, Table, TableState},
@@ -268,19 +268,39 @@ impl App<'_> {
         frame.render_stateful_widget(t, area, &mut self.table_state);
     }
     fn draw_selected(&mut self, frame: &mut Frame, area: Rect) {
-        let surrounding_block = Block::default()
-            .borders(Borders::ALL)
-            .title("Selected Task");
         if let Some(v) = self
             .visible
             .get(*self.table_state.selected_mut().get_or_insert_default())
         {
+            // TODO: use text area
+            let constraints = [Constraint::Max(3), Constraint::Fill(1), Constraint::Fill(2)];
+            let layout = Layout::new(Direction::Vertical, constraints);
+            let [title_area, context_area, boxes_area] = layout.areas(area);
+            let title_block = Block::bordered().title("Title");
             frame.render_widget(
                 Text::raw(self.tasks[*v].title.clone()),
-                surrounding_block.inner(area),
+                title_block.inner(title_area),
             );
-            frame.render_widget(surrounding_block, area);
-            // TODO: draw task
+            frame.render_widget(title_block, title_area);
+            let context_block = Block::bordered().title("Context");
+            frame.render_widget(
+                Text::raw(self.tasks[*v].context.clone()),
+                context_block.inner(context_area),
+            );
+            frame.render_widget(context_block, context_area);
+            let boxes_block = Block::bordered().title("Boxes");
+            frame.render_widget(
+                Text::raw(
+                    self.tasks[*v]
+                        .boxes
+                        .iter()
+                        .map(|b| format!("{:?}", b))
+                        .collect::<String>()
+                        .clone(),
+                ),
+                boxes_block.inner(boxes_area),
+            );
+            frame.render_widget(boxes_block, boxes_area);
         }
     }
     fn handle_events(&mut self) {

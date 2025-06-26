@@ -3,7 +3,7 @@ use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Flex, Layout, Rect},
-    text::{self, Text},
+    text::Text,
     widgets::{Block, Clear},
 };
 use serde::{Deserialize, Serialize};
