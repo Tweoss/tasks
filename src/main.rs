@@ -263,8 +263,18 @@ impl App<'_> {
             );
             frame.render_widget(title_block, title_area);
             let context_block = Block::bordered().title("Context");
+
             frame.render_widget(
-                Text::raw(self.tasks()[*v].context.to_string()),
+                Text::raw(
+                    self.tasks()[*v]
+                        .context
+                        .raw_lines()
+                        .rev()
+                        .take(context_area.height as usize)
+                        .rev()
+                        .map(|r| r.to_string())
+                        .collect::<String>(),
+                ),
                 context_block.inner(context_area),
             );
             frame.render_widget(context_block, context_area);
