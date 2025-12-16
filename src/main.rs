@@ -1,8 +1,10 @@
+mod config;
 mod popup;
+mod storage;
 
 use std::{path::PathBuf, process::Command};
 
-use chrono::{DateTime, Local};
+use chrono::Local;
 use popup::{AddAction, AddDialog, Popup, SaveAction, SaveDialog};
 use ratatui::{
     DefaultTerminal, Frame,
@@ -10,11 +12,15 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Text,
-    widgets::{Block, Borders, Cell, HighlightSpacing, Row, Table, TableState},
+    widgets::{Block, Cell, HighlightSpacing, Row, Table, TableState},
 };
-use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
-use tui_textarea::TextArea;
+
+use crate::{
+    config::Config,
+    popup::ErrorDialog,
+    storage::{BoxState, Data, Task},
+};
 
 // Main Window
 //
@@ -68,8 +74,14 @@ fn main() {
                     .unwrap();
             }
             "-p" | "--print" => {
-                let config = App::load().unwrap_or_default();
-                println!("{}", config.format());
+                let config = match Config::load() {
+                    Ok(c) => c,
+                    Err((c, r)) => {
+                        eprintln!("failed to load config, continuing with default\n{r:?}");
+                        c
+                    }
+                };
+                println!("{config:?}");
             }
             &_ => println!("Unknown command. Run with --help for more options."),
         }
@@ -86,31 +98,27 @@ const CHECK: &str = " ✔";
 const STARTED: &str = "🌟";
 const EMPTY: &str = " -";
 
-type Date = DateTime<Local>;
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct App<'a> {
-    tasks: Vec<Task>,
+    data: Data,
     visible: Vec<usize>,
-    #[serde(skip)]
     focus: FocusState<'a>,
-    #[serde(skip)]
     exit: bool,
-    #[serde(skip)]
     table_state: TableState,
 }
 
 impl Default for App<'_> {
     fn default() -> Self {
-        let tasks = vec![Task {
-            created: Local::now(),
-            title: "whoop".to_string(),
-            boxes: vec![],
-            context: String::new(),
-            completed: Some(Local::now()),
-        }];
+        // let tasks = vec![Task {
+        //     created: Local::now(),
+        //     title: "whoop".to_string(),
+        //     boxes: vec![],
+        //     context: Rope::new(),
+        //     completed: Some(Local::now()),
+        // }];
         Self {
-            tasks: tasks.clone(),
-            visible: (0..tasks.len()).collect(),
+            data: Data::new(get_app_data_path(), vec![]),
+            visible: vec![0],
             focus: FocusState::List,
             exit: false,
             table_state: TableState::new(),
@@ -118,21 +126,21 @@ impl Default for App<'_> {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct Task {
-    created: Date,
-    boxes: Vec<BoxState>,
-    title: String,
-    context: String,
-    completed: Option<Date>,
-}
-#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
-enum BoxState {
-    Checked(DateTime<Local>),
-    Started,
-    Empty,
-}
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+// #[derive(Debug, Deserialize, Serialize, Clone)]
+// struct Task {
+//     created: Date,
+//     boxes: Vec<BoxState>,
+//     title: String,
+//     context: String,
+//     completed: Option<Date>,
+// }
+// #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+// enum BoxState {
+//     Checked(DateTime<Local>),
+//     Started,
+//     Empty,
+// }
+#[derive(Debug, Default, Clone)]
 enum FocusState<'a> {
     Filter,
     #[default]
@@ -140,6 +148,7 @@ enum FocusState<'a> {
     Task(TaskFocus),
     WritePopup(SaveDialog),
     AddNew(AddDialog<'a>),
+    Error(ErrorDialog<'a>),
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 enum TaskFocus {
@@ -150,44 +159,66 @@ enum TaskFocus {
 
 impl App<'_> {
     fn get_path() -> Box<PathBuf> {
-        let dirs = directories::ProjectDirs::from("com", "Tweoss", "Task List")
-            .clone()
-            .unwrap();
-        Box::new(dirs.data_dir().join("data.ron"))
+        let data_dir = get_app_data_path();
+        Box::new(data_dir.join("data.ron"))
     }
     pub fn load() -> Option<Self> {
-        let path = Self::get_path();
-        let contents = std::fs::read_to_string(*path.clone())
-            .map_err(|_| {
-                println!(
-                    "Failed to read data from {}, continuing with default",
-                    path.display()
-                )
-            })
-            .ok()?;
+        let config = match Config::load() {
+            Ok(c) => c,
+            Err((c, r)) => {
+                eprintln!("failed to load config, continuing with default\n{r:?}");
+                c
+            }
+        };
+        // let path = Self::get_path();
+        // let contents = std::fs::read_to_string(*path.clone())
+        //     .map_err(|_| {
+        //         println!(
+        //             "Failed to read data from {}, continuing with default",
+        //             path.display()
+        //         )
+        //     })
+        //     .ok()?;
 
-        let mut app: Self = ron::from_str(&contents)
-            .map_err(|e| {
-                println!(
-                    "Failed to parse data, continuing with default. \nError at: {}:{e}",
-                    path.display()
-                );
-            })
-            .ok()?;
-        app.exit = false;
-        println!("Successfully loaded data from {}", path.display());
+        // let mut app: Self = ron::from_str(&contents)
+        //     .map_err(|e| {
+        //         println!(
+        //             "Failed to parse data, continuing with default. \nError at: {}:{e}",
+        //             path.display()
+        //         );
+        //     })
+        //     .ok()?;
+        let mut focus = FocusState::default();
+        let data = match Data::load(
+            shellexpand::tilde(&config.data_path.to_string_lossy())
+                .into_owned()
+                .into(),
+        ) {
+            Ok(d) => d,
+            Err((d, e)) => {
+                focus = FocusState::Error(ErrorDialog::from_error_focus(&e, focus));
+                let error = format!("{:?}", e.wrap_err("Error loading data"));
+                eprintln!("{error}");
+                d
+            }
+        };
+        let visible = (0..(data.tasks().len())).collect();
+        let app: App = App {
+            data,
+            exit: false,
+            visible,
+            focus,
+            ..Default::default()
+        };
+        // println!("Successfully loaded data from {}", path.display());
         Some(app)
     }
 
-    pub fn store(&self) {
-        let path = Self::get_path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(*path.clone(), self.format()).unwrap();
-    }
-
-    fn format(&self) -> String {
-        ron::ser::to_string_pretty(self, PrettyConfig::new()).unwrap()
-    }
+    // pub fn store(&self) {
+    //     let path = Self::get_path();
+    //     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    //     std::fs::write(*path.clone(), self.format()).unwrap();
+    // }
 
     fn run(&mut self, mut terminal: DefaultTerminal) {
         loop {
@@ -208,13 +239,14 @@ impl App<'_> {
             FocusState::List => {}
             FocusState::Task(task_focus) => {}
             FocusState::AddNew(add) => add.render(frame, frame.area()),
+            FocusState::Error(error) => error.render(frame, frame.area()),
         }
     }
     fn draw_visible(&mut self, frame: &mut Frame, area: Rect) {
         let max_boxes = self
             .visible
             .iter()
-            .map(|t| self.tasks[*t].boxes.len())
+            .map(|t| self.tasks()[*t].boxes.len())
             .max()
             .unwrap_or(0)
             * CHECK.chars().count();
@@ -227,9 +259,9 @@ impl App<'_> {
             .visible
             .iter()
             .map(|t| {
-                let text_cell = Cell::from(self.tasks[*t].title.clone());
+                let text_cell = Cell::from(self.tasks()[*t].title.clone());
                 let completed_cell = Cell::from(
-                    self.tasks[*t]
+                    self.tasks()[*t]
                         .completed
                         .map(|d| d.format("%Y-%m-%m %H:%M").to_string())
                         .unwrap_or_default(),
@@ -237,7 +269,7 @@ impl App<'_> {
                 .rapid_blink();
                 let box_cell = Cell::from(
                     Text::raw(
-                        self.tasks[*t]
+                        self.tasks()[*t]
                             .boxes
                             .iter()
                             .rev()
@@ -268,33 +300,37 @@ impl App<'_> {
         frame.render_stateful_widget(t, area, &mut self.table_state);
     }
     fn draw_selected(&mut self, frame: &mut Frame, area: Rect) {
-        if let Some(v) = self
-            .visible
-            .get(*self.table_state.selected_mut().get_or_insert_default())
-        {
+        let Some(index) = *self.table_state.selected_mut() else {
+            return;
+        };
+        if let Some(v) = self.visible.get(index) {
             // TODO: use text area
             let constraints = [Constraint::Max(3), Constraint::Fill(1), Constraint::Fill(2)];
             let layout = Layout::new(Direction::Vertical, constraints);
             let [title_area, context_area, boxes_area] = layout.areas(area);
             let title_block = Block::bordered().title("Title");
             frame.render_widget(
-                Text::raw(self.tasks[*v].title.clone()),
+                Text::raw(self.tasks()[*v].title.clone()),
                 title_block.inner(title_area),
             );
             frame.render_widget(title_block, title_area);
             let context_block = Block::bordered().title("Context");
             frame.render_widget(
-                Text::raw(self.tasks[*v].context.clone()),
+                Text::raw(self.tasks()[*v].context.to_string()),
                 context_block.inner(context_area),
             );
             frame.render_widget(context_block, context_area);
             let boxes_block = Block::bordered().title("Boxes");
             frame.render_widget(
                 Text::raw(
-                    self.tasks[*v]
+                    self.tasks()[*v]
                         .boxes
                         .iter()
-                        .map(|b| format!("{:?}", b))
+                        .map(|b| match b {
+                            BoxState::Checked(date_time) => format!("Checked at {}\n", date_time),
+                            BoxState::Started => "Started\n".to_string(),
+                            BoxState::Empty => "Empty\n".to_string(),
+                        })
                         .collect::<String>()
                         .clone(),
                 ),
@@ -325,7 +361,8 @@ impl App<'_> {
                 KeyCode::Backspace => self.remove_empty(),
                 KeyCode::Char('F') => {
                     if let Some(i) = self.table_state.selected() {
-                        self.tasks[self.visible[i]].completed = Some(Local::now());
+                        self.data
+                            .set_completed(self.visible[i], Some(Local::now().naive_local()));
                     }
                 }
                 _ => {}
@@ -334,12 +371,24 @@ impl App<'_> {
                 match (save.handle_key(key_event), key_event.code) {
                     (SA::ExitNoWrite, _) => self.exit(),
                     (SA::Write, _) => {
-                        self.store();
-                        self.focus = FocusState::List;
+                        if let Err(e) = self.data.write_dirty() {
+                            self.focus = FocusState::Error(ErrorDialog::from_error_focus(
+                                &e,
+                                self.focus.clone(),
+                            ));
+                        } else {
+                            self.focus = FocusState::List;
+                        }
                     }
                     (SA::Exit, _) => {
-                        self.store();
-                        self.exit();
+                        if let Err(e) = self.data.write_dirty() {
+                            self.focus = FocusState::Error(ErrorDialog::from_error_focus(
+                                &e,
+                                self.focus.clone(),
+                            ));
+                        } else {
+                            self.exit();
+                        }
                     }
                     (SA::Unhandled, KeyCode::Esc) => self.focus = FocusState::List,
                     (SA::Unhandled, _) => {}
@@ -350,19 +399,27 @@ impl App<'_> {
                 (Some(AA::Exit), _) => self.focus = FocusState::List,
                 (Some(AA::Add(t)), _) => {
                     // TODO: properly recalculate visible
-                    self.visible.push(self.tasks.len());
-                    self.tasks.push(t);
+                    self.visible.push(self.tasks().len());
+                    self.data.push(t);
                     self.focus = FocusState::List;
                 }
                 (None, _) => {}
             },
             FocusState::Filter => todo!(),
+            FocusState::Error(ref mut dialog) => match dialog.handle_key(key_event) {
+                popup::ErrorAction::Okay => {
+                    self.focus = *dialog.previous_state.take().unwrap_or_default()
+                }
+            },
         }
     }
     fn next_row(&mut self) {
+        if self.data.tasks().is_empty() {
+            return;
+        }
         let i = match self.table_state.selected() {
             Some(i) => {
-                if i >= self.visible.len() - 1 {
+                if i + 1 >= self.visible.len() {
                     0
                 } else {
                     i + 1
@@ -373,6 +430,9 @@ impl App<'_> {
         self.table_state.select(Some(i));
     }
     fn prev_row(&mut self) {
+        if self.data.tasks().is_empty() {
+            return;
+        }
         let i = match self.table_state.selected() {
             Some(i) => {
                 if i == 0 {
@@ -390,39 +450,33 @@ impl App<'_> {
         let Some(i) = self.table_state.selected() else {
             return;
         };
-        self.tasks[self.visible[i]].boxes.push(BoxState::Empty);
+        self.data.push_box(self.visible[i]);
     }
 
     fn handle_box_step(&mut self) {
         let Some(i) = self.table_state.selected() else {
             return;
         };
-        let last_mut = self.tasks[self.visible[i]]
-            .boxes
-            .iter_mut()
-            .find(|b| !matches!(b, BoxState::Checked(_)));
-        if let Some(last_mut) = last_mut {
-            match last_mut {
-                BoxState::Empty => {
-                    *last_mut = BoxState::Started;
-                    Command::new("/usr/bin/osascript")
-                        .args([
-                            "-e",
-                            r#"tell application "Menubar Countdown"
-                                	set hours to "0"
-                                    set minutes to "25"
-                                 	set seconds to "0"
-                                    set play notification sound to false
-                                    set repeat alert sound to false
-                                	start timer
-                                end tell"#,
-                        ])
-                        .output()
-                        .unwrap();
-                }
-                BoxState::Started => *last_mut = BoxState::Checked(Local::now()),
-                _ => (),
-            }
+        if let Some(BoxState::Started) = self
+            .data
+            .step_box_state(self.visible[i], Local::now().naive_local())
+        {
+            std::thread::spawn(|| {
+                Command::new("/usr/bin/osascript")
+                    .args([
+                        "-e",
+                        r#"tell application "Menubar Countdown"
+                        	set hours to "0"
+                            set minutes to "25"
+                         	set seconds to "0"
+                            set play notification sound to false
+                            set repeat alert sound to false
+                        	start timer
+                        end tell"#,
+                    ])
+                    .output()
+                    .unwrap();
+            });
         };
     }
 
@@ -430,17 +484,30 @@ impl App<'_> {
         let Some(i) = self.table_state.selected() else {
             return;
         };
-        let Some(box_i) = self.tasks[self.visible[i]]
-            .boxes
-            .iter()
-            .rposition(|b| matches!(b, BoxState::Empty))
-        else {
-            return;
-        };
-        self.tasks[self.visible[i]].boxes.remove(box_i);
+        self.data.remove_empty_state(self.visible[i]);
+        // let Some(box_i) = self.tasks[self.visible[i]]
+        //     .boxes
+        //     .iter()
+        //     .rposition(|b| matches!(b, BoxState::Empty))
+        // else {
+        //     return;
+        // };
+        // self.tasks[self.visible[i]].boxes.remove(box_i);
     }
 
     fn exit(&mut self) {
         self.exit = true;
     }
+
+    fn tasks(&self) -> &[Task] {
+        self.data.tasks()
+    }
+}
+
+fn get_app_data_path() -> PathBuf {
+    let dirs = directories::ProjectDirs::from("com", "Tweoss", "Task List")
+        .clone()
+        .unwrap();
+    let data_dir = dirs.data_dir();
+    data_dir.to_path_buf()
 }

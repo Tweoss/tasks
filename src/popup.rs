@@ -9,7 +9,7 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 use tui_textarea::TextArea;
 
-use crate::Task;
+use crate::{FocusState, Task};
 
 pub trait Popup {
     const TITLE: &str;
@@ -20,8 +20,8 @@ pub trait Popup {
     fn render(&mut self, frame: &mut Frame, area: Rect) {
         let block = Block::bordered().title(Self::TITLE);
 
-        let percent_x = 60;
-        let percent_y = 20;
+        let percent_x = 50;
+        let percent_y = 30;
         let vertical = Layout::vertical([Constraint::Percentage(percent_y)]).flex(Flex::Center);
         let horizontal = Layout::horizontal([Constraint::Percentage(percent_x)]).flex(Flex::Center);
         let [area] = vertical.areas(area);
@@ -105,19 +105,60 @@ impl Popup for AddDialog<'_> {
     fn handle_key(&mut self, key_event: KeyEvent) -> Self::Action {
         match key_event.code {
             KeyCode::Enter => self.textbox.lines().first().map(|title| {
-                AddAction::Add(Task {
-                    created: Local::now(),
-                    boxes: vec![],
-                    title: title.to_string(),
-                    context: String::new(),
-                    completed: None,
-                })
+                AddAction::Add(Task::new(
+                    title.trim().to_string(),
+                    Local::now().naive_local(),
+                    vec![],
+                    String::new().into(),
+                    None,
+                ))
             }),
             KeyCode::Esc => Some(AddAction::Exit),
             _ => {
                 self.textbox.input(key_event);
                 None
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorDialog<'a> {
+    pub error: String,
+    pub previous_state: Option<Box<FocusState<'a>>>,
+}
+
+pub enum ErrorAction {
+    Okay,
+}
+
+impl<'a> Popup for ErrorDialog<'a> {
+    const TITLE: &'static str = "Error Popup";
+    type Action = ErrorAction;
+
+    fn draw_in_rect(&mut self, frame: &mut Frame, area: Rect) {
+        frame.render_widget(Text::raw(self.error.clone()), area);
+    }
+
+    fn get_dimensions(&self, _: Rect) -> (u16, u16) {
+        (
+            self.error.lines().map(|l| l.chars().count()).max().unwrap() as u16,
+            self.error.lines().count() as u16,
+        )
+    }
+
+    fn handle_key(&mut self, _: KeyEvent) -> ErrorAction {
+        ErrorAction::Okay
+    }
+}
+
+const MAX_ERROR_WIDTH: usize = 80;
+
+impl<'a> ErrorDialog<'a> {
+    pub fn from_error_focus(error: &eyre::Report, focus: FocusState<'a>) -> Self {
+        Self {
+            error: textwrap::fill(&format!("{:?}", error), MAX_ERROR_WIDTH),
+            previous_state: Some(Box::new(focus)),
         }
     }
 }
