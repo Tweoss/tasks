@@ -2,7 +2,7 @@ mod config;
 mod popup;
 mod storage;
 
-use std::{path::PathBuf, process::Command};
+use std::process::Command;
 
 use chrono::Local;
 use popup::{AddAction, AddDialog, Popup, SaveAction, SaveDialog};
@@ -17,7 +17,7 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::Config,
+    config::{Config, get_default_app_data_path},
     popup::ErrorDialog,
     storage::{BoxState, Data, Task},
 };
@@ -59,7 +59,7 @@ fn main() {
                      Run without options for tui.\n\n\
                      Options:\n\
                      \t-h, --help: print this help message\n\
-                     \t-e, --edit: edit the data file\n\
+                     \t-e, --edit: edit the config file\n\
                      \t-p, --print: print the loaded configuration\n\
                      ",
                     args[0]
@@ -67,7 +67,7 @@ fn main() {
             }
             "-e" | "--edit" => {
                 Command::new(std::env::var("EDITOR").unwrap_or("/usr/bin/vim".to_string()))
-                    .arg(*App::get_path())
+                    .arg(config::get_config_path().unwrap())
                     .spawn()
                     .unwrap()
                     .wait()
@@ -109,16 +109,9 @@ pub struct App<'a> {
 
 impl Default for App<'_> {
     fn default() -> Self {
-        // let tasks = vec![Task {
-        //     created: Local::now(),
-        //     title: "whoop".to_string(),
-        //     boxes: vec![],
-        //     context: Rope::new(),
-        //     completed: Some(Local::now()),
-        // }];
         Self {
-            data: Data::new(get_app_data_path(), vec![]),
-            visible: vec![0],
+            data: Data::new(get_default_app_data_path(), vec![]),
+            visible: vec![],
             focus: FocusState::List,
             exit: false,
             table_state: TableState::new(),
@@ -126,20 +119,6 @@ impl Default for App<'_> {
     }
 }
 
-// #[derive(Debug, Deserialize, Serialize, Clone)]
-// struct Task {
-//     created: Date,
-//     boxes: Vec<BoxState>,
-//     title: String,
-//     context: String,
-//     completed: Option<Date>,
-// }
-// #[derive(Debug, Deserialize, Serialize, Clone, Copy)]
-// enum BoxState {
-//     Checked(DateTime<Local>),
-//     Started,
-//     Empty,
-// }
 #[derive(Debug, Default, Clone)]
 enum FocusState<'a> {
     Filter,
@@ -158,10 +137,6 @@ enum TaskFocus {
 }
 
 impl App<'_> {
-    fn get_path() -> Box<PathBuf> {
-        let data_dir = get_app_data_path();
-        Box::new(data_dir.join("data.ron"))
-    }
     pub fn load() -> Option<Self> {
         let config = match Config::load() {
             Ok(c) => c,
@@ -170,24 +145,6 @@ impl App<'_> {
                 c
             }
         };
-        // let path = Self::get_path();
-        // let contents = std::fs::read_to_string(*path.clone())
-        //     .map_err(|_| {
-        //         println!(
-        //             "Failed to read data from {}, continuing with default",
-        //             path.display()
-        //         )
-        //     })
-        //     .ok()?;
-
-        // let mut app: Self = ron::from_str(&contents)
-        //     .map_err(|e| {
-        //         println!(
-        //             "Failed to parse data, continuing with default. \nError at: {}:{e}",
-        //             path.display()
-        //         );
-        //     })
-        //     .ok()?;
         let mut focus = FocusState::default();
         let data = match Data::load(
             shellexpand::tilde(&config.data_path.to_string_lossy())
@@ -210,15 +167,8 @@ impl App<'_> {
             focus,
             ..Default::default()
         };
-        // println!("Successfully loaded data from {}", path.display());
         Some(app)
     }
-
-    // pub fn store(&self) {
-    //     let path = Self::get_path();
-    //     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    //     std::fs::write(*path.clone(), self.format()).unwrap();
-    // }
 
     fn run(&mut self, mut terminal: DefaultTerminal) {
         loop {
@@ -483,14 +433,6 @@ impl App<'_> {
             return;
         };
         self.data.remove_empty_state(self.visible[i]);
-        // let Some(box_i) = self.tasks[self.visible[i]]
-        //     .boxes
-        //     .iter()
-        //     .rposition(|b| matches!(b, BoxState::Empty))
-        // else {
-        //     return;
-        // };
-        // self.tasks[self.visible[i]].boxes.remove(box_i);
     }
 
     fn exit(&mut self) {
@@ -500,12 +442,4 @@ impl App<'_> {
     fn tasks(&self) -> &[Task] {
         self.data.tasks()
     }
-}
-
-fn get_app_data_path() -> PathBuf {
-    let dirs = directories::ProjectDirs::from("com", "Tweoss", "Task List")
-        .clone()
-        .unwrap();
-    let data_dir = dirs.data_dir();
-    data_dir.to_path_buf()
 }

@@ -8,7 +8,7 @@ pub struct Config {
     pub data_path: PathBuf,
 }
 
-fn get_app_data_path() -> PathBuf {
+pub fn get_default_app_data_path() -> PathBuf {
     let dirs = directories::ProjectDirs::from("com", "Tweoss", "Task List")
         .clone()
         .unwrap();
@@ -19,7 +19,7 @@ fn get_app_data_path() -> PathBuf {
 impl Config {
     pub fn load() -> Result<Self, (Self, eyre::Report)> {
         let mut out = Self {
-            data_path: get_app_data_path(),
+            data_path: get_default_app_data_path(),
         };
         match out.read_from_file() {
             Ok(_) => Ok(out),
@@ -28,8 +28,7 @@ impl Config {
     }
 
     fn read_from_file(&mut self) -> Result<(), eyre::Report> {
-        let path = std::env::home_dir().ok_or_eyre("missing home directory env")?;
-        let path = path.join(".config/tasks/config.toml");
+        let path = get_config_path()?;
         let mut buf = String::new();
         let msg = format!("reading from {}", path.display());
         OpenOptions::new()
@@ -43,4 +42,10 @@ impl Config {
 
         Ok(())
     }
+}
+
+pub fn get_config_path() -> Result<PathBuf, eyre::Error> {
+    let path = std::env::home_dir().ok_or_eyre("missing home directory env")?;
+    let path = path.join(".config/tasks/config.toml");
+    Ok(path)
 }
