@@ -287,10 +287,8 @@ impl App<'_> {
             })
             .collect::<Vec<_>>();
         let selected_row_style = Style::default().fg(Color::White).bg(Color::Blue);
-        let bar = " █ ";
         let t = Table::new(rows, list_split.iter())
             .row_highlight_style(selected_row_style)
-            .highlight_symbol(Text::from(bar))
             .highlight_spacing(HighlightSpacing::Always)
             .block(Block::bordered().gray())
             .header(
