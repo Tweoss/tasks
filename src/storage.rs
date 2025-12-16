@@ -281,6 +281,7 @@ impl Display for Task {
             writeln!(f, "{}: {}", field.key, field.value)?;
         }
         writeln!(f, "---")?;
+        writeln!(f, "{}", self.context)?;
         Ok(())
     }
 }
