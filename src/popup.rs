@@ -14,10 +14,10 @@ use crate::{FocusState, Task};
 pub trait Popup {
     const TITLE: &str;
     type Action;
-    fn draw_in_rect(&mut self, frame: &mut Frame, area: Rect);
+    fn draw_in_rect(&self, frame: &mut Frame, area: Rect);
     fn get_dimensions(&self, available_area: Rect) -> (u16, u16);
 
-    fn render(&mut self, frame: &mut Frame, area: Rect) {
+    fn render(&self, frame: &mut Frame, area: Rect) {
         let block = Block::bordered().title(Self::TITLE);
 
         let percent_x = 50;
@@ -56,7 +56,7 @@ impl Popup for SaveDialog {
     const TITLE: &str = "Exit Popup";
     type Action = SaveAction;
 
-    fn draw_in_rect(&mut self, frame: &mut Frame, area: Rect) {
+    fn draw_in_rect(&self, frame: &mut Frame, area: Rect) {
         frame.render_widget(
             Text::raw("write(w), write and exit(y), exit(n)\nESC to cancel"),
             area,
@@ -94,7 +94,7 @@ impl Popup for AddDialog<'_> {
     const TITLE: &'static str = "Add New Task";
     type Action = Option<AddAction>;
 
-    fn draw_in_rect(&mut self, frame: &mut Frame, area: Rect) {
+    fn draw_in_rect(&self, frame: &mut Frame, area: Rect) {
         frame.render_widget(self.textbox.as_ref(), area);
     }
 
@@ -136,7 +136,7 @@ impl<'a> Popup for ErrorDialog<'a> {
     const TITLE: &'static str = "Error Popup";
     type Action = ErrorAction;
 
-    fn draw_in_rect(&mut self, frame: &mut Frame, area: Rect) {
+    fn draw_in_rect(&self, frame: &mut Frame, area: Rect) {
         frame.render_widget(Text::raw(self.error.clone()), area);
     }
 

@@ -125,15 +125,20 @@ enum FocusState<'a> {
     #[default]
     List,
     Task(TaskFocus),
-    WritePopup(SaveDialog),
-    AddNew(AddDialog<'a>),
-    Error(ErrorDialog<'a>),
+    Popup(PopupEnum<'a>),
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 enum TaskFocus {
     Boxes,
     Context,
     Deletion,
+}
+
+#[derive(Debug, Clone)]
+enum PopupEnum<'a> {
+    WritePopup(SaveDialog),
+    AddNew(AddDialog<'a>),
+    Error(ErrorDialog<'a>),
 }
 
 impl App<'_> {
@@ -153,7 +158,8 @@ impl App<'_> {
         ) {
             Ok(d) => d,
             Err((d, e)) => {
-                focus = FocusState::Error(ErrorDialog::from_error_focus(&e, focus));
+                focus =
+                    FocusState::Popup(PopupEnum::Error(ErrorDialog::from_error_focus(&e, focus)));
                 let error = format!("{:?}", e.wrap_err("Error loading data"));
                 eprintln!("{error}");
                 d
@@ -181,15 +187,22 @@ impl App<'_> {
     }
     fn draw(&mut self, frame: &mut Frame) {
         let task_split = Layout::horizontal(Constraint::from_fills([1, 1])).split(frame.area());
-        self.draw_visible(frame, task_split[0]);
-        self.draw_selected(frame, task_split[1]);
-        match &mut self.focus {
-            FocusState::WritePopup(save) => save.render(frame, frame.area()),
+        match self.focus.clone() {
+            FocusState::Popup(p) => {
+                self.draw_visible(frame, task_split[0]);
+                self.draw_selected(frame, task_split[1]);
+                match p {
+                    PopupEnum::WritePopup(d) => d.render(frame, frame.area()),
+                    PopupEnum::AddNew(d) => d.render(frame, frame.area()),
+                    PopupEnum::Error(d) => d.render(frame, frame.area()),
+                }
+            }
             FocusState::Filter => todo!(),
-            FocusState::List => {}
+            FocusState::List => {
+                self.draw_visible(frame, task_split[0]);
+                self.draw_selected(frame, task_split[1]);
+            }
             FocusState::Task(task_focus) => {}
-            FocusState::AddNew(add) => add.render(frame, frame.area()),
-            FocusState::Error(error) => error.render(frame, frame.area()),
         }
     }
     fn draw_visible(&mut self, frame: &mut Frame, area: Rect) {
@@ -312,10 +325,14 @@ impl App<'_> {
             FocusState::List => match key_event.code {
                 KeyCode::Down => self.next_row(),
                 KeyCode::Up => self.prev_row(),
-                KeyCode::Char('q') => self.focus = FocusState::WritePopup(SaveDialog {}),
+                KeyCode::Char('q') => {
+                    self.focus = FocusState::Popup(PopupEnum::WritePopup(SaveDialog {}))
+                }
                 KeyCode::Char('n') => self.handle_new_empty(),
                 KeyCode::Char('N') => self.handle_box_step(),
-                KeyCode::Char('A') => self.focus = FocusState::AddNew(Default::default()),
+                KeyCode::Char('A') => {
+                    self.focus = FocusState::Popup(PopupEnum::AddNew(Default::default()))
+                }
                 KeyCode::Backspace => self.remove_empty(),
                 KeyCode::Char('F') => {
                     if let Some(i) = self.table_state.selected() {
@@ -325,14 +342,13 @@ impl App<'_> {
                 }
                 _ => {}
             },
-            FocusState::WritePopup(ref mut save) => {
+            FocusState::Popup(PopupEnum::WritePopup(ref mut save)) => {
                 match (save.handle_key(key_event), key_event.code) {
                     (SA::ExitNoWrite, _) => self.exit(),
                     (SA::Write, _) => {
                         if let Err(e) = self.data.write_dirty() {
-                            self.focus = FocusState::Error(ErrorDialog::from_error_focus(
-                                &e,
-                                self.focus.clone(),
+                            self.focus = FocusState::Popup(PopupEnum::Error(
+                                ErrorDialog::from_error_focus(&e, self.focus.clone()),
                             ));
                         } else {
                             self.focus = FocusState::List;
@@ -340,9 +356,8 @@ impl App<'_> {
                     }
                     (SA::Exit, _) => {
                         if let Err(e) = self.data.write_dirty() {
-                            self.focus = FocusState::Error(ErrorDialog::from_error_focus(
-                                &e,
-                                self.focus.clone(),
+                            self.focus = FocusState::Popup(PopupEnum::Error(
+                                ErrorDialog::from_error_focus(&e, self.focus.clone()),
                             ));
                         } else {
                             self.exit();
@@ -353,22 +368,26 @@ impl App<'_> {
                 }
             }
             FocusState::Task(_) => todo!(),
-            FocusState::AddNew(ref mut add) => match (add.handle_key(key_event), key_event.code) {
-                (Some(AA::Exit), _) => self.focus = FocusState::List,
-                (Some(AA::Add(t)), _) => {
-                    // TODO: properly recalculate visible
-                    self.visible.push(self.tasks().len());
-                    self.data.push(t);
-                    self.focus = FocusState::List;
+            FocusState::Popup(PopupEnum::AddNew(ref mut add)) => {
+                match (add.handle_key(key_event), key_event.code) {
+                    (Some(AA::Exit), _) => self.focus = FocusState::List,
+                    (Some(AA::Add(t)), _) => {
+                        // TODO: properly recalculate visible
+                        self.visible.push(self.tasks().len());
+                        self.data.push(t);
+                        self.focus = FocusState::List;
+                    }
+                    (None, _) => {}
                 }
-                (None, _) => {}
-            },
+            }
             FocusState::Filter => todo!(),
-            FocusState::Error(ref mut dialog) => match dialog.handle_key(key_event) {
-                popup::ErrorAction::Okay => {
-                    self.focus = *dialog.previous_state.take().unwrap_or_default()
+            FocusState::Popup(PopupEnum::Error(ref mut dialog)) => {
+                match dialog.handle_key(key_event) {
+                    popup::ErrorAction::Okay => {
+                        self.focus = *dialog.previous_state.take().unwrap_or_default()
+                    }
                 }
-            },
+            }
         }
     }
     fn next_row(&mut self) {
