@@ -42,10 +42,11 @@ impl Data {
             .wrap_err_with(|| format!("listing directories in {}", path.display()))?
             .collect::<Result<Vec<_>, _>>()?;
         read_dir.sort_by_key(|entry| entry.path());
+        let mut error = Ok(());
         for entry in read_dir {
             let file_type = entry.file_type()?;
             if file_type.is_dir() {
-                self.load_dir(entry.path())?;
+                error = error.and(self.load_dir(entry.path()));
             }
             if file_type.is_file()
                 && entry
@@ -53,13 +54,20 @@ impl Data {
                     .extension()
                     .is_some_and(|e| e.to_str() == Some("md"))
             {
-                let task = self
+                let wrap_err_with = self
                     .load_file(entry.path())
-                    .wrap_err_with(|| format!("reading '{}'", entry.path().display()))?;
+                    .wrap_err_with(|| format!("reading '{}'", entry.path().display()));
+                let task = match wrap_err_with {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error = error.and(Err(e));
+                        continue;
+                    }
+                };
                 self.tasks.push(task);
             }
         }
-        Ok(())
+        error
     }
 
     fn load_file(&mut self, path: PathBuf) -> Result<Task> {
