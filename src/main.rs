@@ -12,14 +12,16 @@ use ratatui::{
     crossterm::event::{self, Event, KeyEvent, KeyEventKind},
     widgets::Widget,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{Config, get_default_app_data_path},
     filter::FilteredData,
     popup::ErrorDialog,
     storage::{Data, Task},
-    tui::app::{AppTui, AppWidget},
+    tui::{
+        app::{AppTui, AppWidget},
+        task::TaskFocus,
+    },
 };
 
 // Main Window
@@ -116,11 +118,14 @@ pub enum FocusState<'a> {
     Task(TaskFocus),
     Popup(PopupEnum<'a>),
 }
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub enum TaskFocus {
-    Boxes,
-    Context,
-    Deletion,
+
+impl FocusState<'_> {
+    fn as_task(&self) -> Option<TaskFocus> {
+        match self {
+            FocusState::Task(task_focus) => Some(*task_focus),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +179,7 @@ impl App {
         }
     }
     fn draw<'a>(&mut self, frame: &mut Frame, tui: Rc<RefCell<AppTui<'a>>>) {
-        let app_widget = AppWidget(tui.borrow_mut(), &self.data);
+        let app_widget = AppWidget(tui.clone(), &self.data);
         app_widget.render(frame.area(), frame.buffer_mut());
     }
 

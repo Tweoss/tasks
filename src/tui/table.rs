@@ -5,6 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Cell, HighlightSpacing, Row, Table, TableState, Widget};
 
+use crate::FocusState;
 use crate::filter::FilteredData;
 use crate::storage::BoxState;
 
@@ -116,11 +117,15 @@ impl TableTui {
     }
 }
 
-pub struct TableWidget<'a, 'b>(pub &'a mut TableTui, pub &'b FilteredData);
+pub struct TableWidget<'a, 'b>(
+    pub &'a mut TableTui,
+    pub &'a FocusState<'a>,
+    pub &'b FilteredData,
+);
 
 impl Widget for TableWidget<'_, '_> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        let TableWidget(table, data) = self;
+        let TableWidget(table, focus, data) = self;
         let max_boxes =
             data.iter().map(|t| t.boxes.len()).max().unwrap_or(0) * CHECK.chars().count();
         let list_split = [
@@ -156,7 +161,11 @@ impl Widget for TableWidget<'_, '_> {
                     .style(Style::new().bg(Color::Reset))
             })
             .collect::<Vec<_>>();
-        let selected_row_style = Style::default().fg(Color::White).bg(Color::Blue);
+        let selected_row_style = Style::default().fg(Color::White);
+        let selected_row_style = match focus {
+            FocusState::List => selected_row_style.bg(Color::Blue),
+            _ => selected_row_style.bg(Color::DarkGray),
+        };
         let t = Table::new(rows, list_split.iter())
             .row_highlight_style(selected_row_style)
             .highlight_spacing(HighlightSpacing::Always)

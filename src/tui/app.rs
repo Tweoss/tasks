@@ -1,4 +1,7 @@
-use std::cell::RefMut;
+use std::{
+    cell::{RefCell, RefMut},
+    rc::Rc,
+};
 
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
@@ -13,7 +16,7 @@ use crate::{
     tui::{
         popup::{self, PopupTui, PopupWidget},
         table::{TableTui, TableWidget},
-        task::{TaskTui, TaskWidget},
+        task::{TaskFocus, TaskTui, TaskWidget},
     },
 };
 
@@ -51,18 +54,25 @@ impl AppTui<'_> {
         data: &mut FilteredData,
         key_event: KeyEvent,
     ) -> Option<Action> {
-        match &self.focus {
+        match &mut self.focus {
             FocusState::List => match self.table.handle_key_event(data, key_event)? {
                 super::table::Action::Add => {
                     self.focus = FocusState::Popup(PopupEnum::AddNew(Default::default()))
                 }
-                super::table::Action::Unhandled => {
-                    if let KeyCode::Char('q') = key_event.code {
+                super::table::Action::Unhandled => match key_event.code {
+                    KeyCode::Char('q') => {
                         self.focus = FocusState::Popup(PopupEnum::WritePopup(SaveDialog {}))
                     }
-                }
+                    KeyCode::Enter => self.focus = FocusState::Task(TaskFocus::Context),
+                    _ => (),
+                },
             },
-            FocusState::Task(task_focus) => todo!(),
+            FocusState::Task(task_focus) => {
+                match self.task.handle_key_event(key_event, task_focus)? {
+                    super::task::Action::Exit => self.focus = FocusState::List,
+                    super::task::Action::Unhandled => {}
+                }
+            }
             FocusState::Popup(_) => {
                 match self
                     .popup
@@ -83,21 +93,32 @@ impl Default for AppTui<'_> {
     }
 }
 
-pub struct AppWidget<'a, 'b>(pub RefMut<'a, AppTui<'b>>, pub &'a FilteredData);
+pub struct AppWidget<'a, 'b>(pub Rc<RefCell<AppTui<'a>>>, pub &'b FilteredData);
+// pub struct AppWidget<'a, 'b>(pub RefMut<'a, AppTui<'b>>, pub &'a FilteredData);
 
 impl Widget for AppWidget<'_, '_> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        let AppWidget(mut app, data) = self;
+        let AppWidget(app, data) = self;
         // In future, can match on focus to change layout.
         let task_split = Layout::horizontal(Constraint::from_fills([1, 1])).split(area);
-        TableWidget(&mut app.table, data).render(task_split[0], buf);
-        TaskWidget(&app.task, data, app.table.selected()).render(task_split[1], buf);
+        {
+            let app = app.clone();
+            let (mut table, focus) =
+                RefMut::map_split(app.borrow_mut(), |a| (&mut a.table, &mut a.focus));
+            TableWidget(&mut table, &focus, data).render(task_split[0], buf);
+        }
+        let app = app.borrow_mut();
+        TaskWidget(
+            &app.task,
+            data,
+            app.table.selected(),
+            app.focus.clone().as_task(),
+        )
+        .render(task_split[1], buf);
 
         match app.focus.clone() {
             FocusState::List => {}
-            FocusState::Task(task_focus) => {
-                todo!()
-            }
+            FocusState::Task(_) => {}
             FocusState::Popup(p) => PopupWidget(&p).render(area, buf),
         }
     }

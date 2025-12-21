@@ -1,4 +1,4 @@
-use ratatui::crossterm::event::KeyEvent;
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Widget};
 
@@ -7,18 +7,65 @@ use crate::storage::BoxState;
 
 pub struct TaskTui {}
 
+pub enum Action {
+    Exit,
+    Unhandled,
+}
+
 impl TaskTui {
     pub fn new() -> Self {
         Self {}
     }
-    pub fn handle_key_event(&mut self, key_event: KeyEvent) {}
+    pub fn handle_key_event(
+        &mut self,
+        key_event: KeyEvent,
+        focus: &mut TaskFocus,
+    ) -> Option<Action> {
+        let i = focus.to_i8();
+        let new_i = match key_event.code {
+            KeyCode::Up => i - 1,
+            KeyCode::Down => i + 1,
+            KeyCode::Esc => return Some(Action::Exit),
+            _ => return Some(Action::Unhandled),
+        };
+        *focus = TaskFocus::from_i8_wrapped(new_i);
+        None
+    }
 }
 
-pub struct TaskWidget<'a, 'b>(pub &'a TaskTui, pub &'b FilteredData, pub Option<usize>);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TaskFocus {
+    Boxes,
+    Context,
+}
+
+impl TaskFocus {
+    const TASK_COUNT: i8 = 2;
+    fn to_i8(self) -> i8 {
+        match self {
+            TaskFocus::Boxes => 0,
+            TaskFocus::Context => 1,
+        }
+    }
+    fn from_i8_wrapped(v: i8) -> Self {
+        match v.rem_euclid(Self::TASK_COUNT) {
+            0 => TaskFocus::Boxes,
+            1 => TaskFocus::Context,
+            _ => unreachable!(),
+        }
+    }
+}
+
+pub struct TaskWidget<'a, 'b>(
+    pub &'a TaskTui,
+    pub &'b FilteredData,
+    pub Option<usize>,
+    pub Option<TaskFocus>,
+);
 
 impl Widget for TaskWidget<'_, '_> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        let TaskWidget(task, data, index) = self;
+        let TaskWidget(task, data, index, focus) = self;
 
         let Some(index) = index else {
             return;
@@ -30,10 +77,26 @@ impl Widget for TaskWidget<'_, '_> {
         let constraints = [Constraint::Max(3), Constraint::Fill(1), Constraint::Fill(2)];
         let layout = Layout::new(Direction::Vertical, constraints);
         let [title_area, context_area, boxes_area] = layout.areas(area);
+        fn style_focused<'a>(
+            block: Block<'a>,
+            focus: &Option<TaskFocus>,
+            target: TaskFocus,
+        ) -> Block<'a> {
+            if Some(target) == *focus {
+                block.border_style(Style::new().fg(Color::LightBlue))
+            } else {
+                block
+            }
+        }
+
         let title_block = Block::bordered().title("Title");
         Text::raw(v.title.clone()).render(title_block.inner(title_area), buf);
         title_block.render(title_area, buf);
-        let context_block = Block::bordered().title("Context");
+        let context_block = style_focused(
+            Block::bordered().title("Context"),
+            &focus,
+            TaskFocus::Context,
+        );
 
         Text::raw(
             v.context
@@ -46,7 +109,7 @@ impl Widget for TaskWidget<'_, '_> {
         )
         .render(context_block.inner(context_area), buf);
         context_block.render(context_area, buf);
-        let boxes_block = Block::bordered().title("Boxes");
+        let boxes_block = style_focused(Block::bordered().title("Boxes"), &focus, TaskFocus::Boxes);
         Text::raw(
             v.boxes
                 .iter()
