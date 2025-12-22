@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub data_path: PathBuf,
+    pub log_path: PathBuf,
 }
 
 pub fn get_default_app_data_path() -> PathBuf {
@@ -19,7 +20,8 @@ pub fn get_default_app_data_path() -> PathBuf {
 impl Config {
     pub fn load() -> Result<Self, (Self, eyre::Report)> {
         let mut out = Self {
-            data_path: get_default_app_data_path(),
+            data_path: get_default_app_data_path().join("tasks"),
+            log_path: get_default_app_data_path().join("logs"),
         };
         match out.read_from_file() {
             Ok(_) => Ok(out),

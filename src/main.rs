@@ -4,8 +4,12 @@ mod popup;
 mod storage;
 mod tui;
 
-use std::{cell::RefCell, process::Command, rc::Rc};
+use std::{
+    cell::RefCell, fs::create_dir_all, path::PathBuf, process::Command, rc::Rc, time::SystemTime,
+};
 
+use chrono::{Datelike, Local};
+use eyre::Context;
 use popup::{AddDialog, SaveDialog};
 use ratatui::{
     DefaultTerminal, Frame,
@@ -90,7 +94,8 @@ fn main() {
         return;
     }
 
-    let (mut app, tui) = App::load();
+    let (mut app, tui, config) = App::load();
+    setup_logger(&config).expect("setting up logger");
     let terminal = ratatui::init();
     app.run(terminal, tui);
     ratatui::restore();
@@ -136,7 +141,7 @@ pub enum PopupEnum<'a> {
 }
 
 impl App {
-    pub fn load<'a>() -> (Self, AppTui<'a>) {
+    pub fn load<'a>() -> (Self, AppTui<'a>, Config) {
         let config = match Config::load() {
             Ok(c) => c,
             Err((c, r)) => {
@@ -161,7 +166,7 @@ impl App {
         };
         let data = FilteredData::new(data);
         let app: App = App { data, exit: false };
-        (app, tui)
+        (app, tui, config)
     }
 
     fn run(&mut self, mut terminal: DefaultTerminal, tui: AppTui) {
@@ -201,4 +206,36 @@ impl App {
     fn exit(&mut self) {
         self.exit = true;
     }
+}
+
+fn setup_logger(config: &Config) -> Result<(), eyre::Report> {
+    let time = Local::now();
+    let log_file = config.log_path.join(format!(
+        "{:04}_{:02}_{:02}.log",
+        time.year(),
+        time.month(),
+        time.day()
+    ));
+    let log_file = PathBuf::from(shellexpand::tilde(&log_file.to_string_lossy()).into_owned());
+    let parent = log_file.parent().unwrap();
+    create_dir_all(parent).wrap_err_with(|| format!("creating log parent {}", parent.display()))?;
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{} {} {}] {}",
+                humantime::format_rfc3339_seconds(SystemTime::now()),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Debug)
+        .chain(std::io::stdout())
+        .chain(
+            fern::log_file(&log_file)
+                .wrap_err_with(|| format!("opening {}", log_file.display()))?,
+        )
+        .apply()?;
+    log::info!("Starting logging");
+    Ok(())
 }
