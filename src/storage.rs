@@ -230,13 +230,15 @@ impl Task {
                         created = Err(eyre!("created should be in date format"));
                     }
                 }
-                ("boxes", v) => {
-                    if let Value::BoxList(list) = v {
+                ("boxes", v) => match v {
+                    Value::BoxList(list) => {
                         boxes = Ok(list);
-                    } else {
+                    }
+                    Value::Unknown(s) if s.is_empty() => boxes = Ok(vec![]),
+                    _ => {
                         created = Err(eyre!("boxes should be in list format"));
                     }
-                }
+                },
                 ("completed", v) => {
                     match v {
                         Value::Date(date) => {
