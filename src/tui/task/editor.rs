@@ -6,11 +6,21 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::tui::task::scrollbar::ScrollbarWidget;
+use crate::{
+    storage::{
+        Task,
+        editing::{EditOp, Pos},
+    },
+    tui::task::scrollbar::ScrollbarWidget,
+};
 
 pub struct EditorTui {
     view_offset: usize,
-    last_line_count: Option<usize>,
+    last_state: Option<BufferState>,
+}
+
+struct BufferState {
+    cursor: Pos,
 }
 
 pub enum Action {
@@ -21,7 +31,7 @@ impl EditorTui {
     pub fn new() -> Self {
         Self {
             view_offset: 0,
-            last_line_count: None,
+            last_state: None,
         }
     }
 
@@ -29,21 +39,115 @@ impl EditorTui {
         &mut self,
         key_event: KeyEvent,
         focus: &mut EditorFocus,
+        task: Option<&mut Task>,
     ) -> Option<Action> {
         match focus {
-            EditorFocus::Unlocked => {
-                if key_event.code == KeyCode::Enter {
+            EditorFocus::Unlocked => match key_event.code {
+                KeyCode::Enter => {
                     *focus = EditorFocus::Locked;
-                } else {
+                    return None;
+                }
+                _ => {
                     return Some(Action::Unhandled);
                 }
-            }
-            EditorFocus::Locked => match key_event.code {
-                KeyCode::Esc => *focus = EditorFocus::Unlocked,
-                KeyCode::Up => self.scroll_up(),
-                KeyCode::Down => self.scroll_down(),
-                _ => return Some(Action::Unhandled),
             },
+            EditorFocus::Locked => {}
+        }
+
+        assert!(matches!(focus, EditorFocus::Locked));
+
+        let Some(task) = task else {
+            return Some(Action::Unhandled);
+        };
+        let line_count = task.context().line_len();
+
+        // Put cursor at end of task if not already created.
+        let last_state = self.last_state.get_or_insert(BufferState {
+            cursor: (
+                line_count.saturating_sub(1),
+                task.context()
+                    .lines()
+                    .next_back()
+                    .map(|l| l.chars().count())
+                    .unwrap_or(0),
+            )
+                .into(),
+        });
+
+        match key_event.code {
+            KeyCode::Esc => *focus = EditorFocus::Unlocked,
+            KeyCode::Up => self.scroll_up(),
+            KeyCode::Down => self.scroll_down(line_count),
+            KeyCode::Char(c) => {
+                let v = task.apply_edit(EditOp::Insert {
+                    pos: last_state.cursor,
+                    text: c.to_string(),
+                });
+                if let Err(e) = v {
+                    log::error!(
+                        "invalid editor logic encountered '{}' while typing character '{}' at position {}:{}",
+                        e,
+                        c,
+                        last_state.cursor.line,
+                        last_state.cursor.column
+                    );
+                    return None;
+                };
+                last_state.cursor.column += 1;
+            }
+            KeyCode::Enter => {
+                let v = task.apply_edit(EditOp::Insert {
+                    pos: last_state.cursor,
+                    text: "\n".to_string(),
+                });
+                if let Err(e) = v {
+                    log::error!(
+                        "invalid editor logic encountered '{}' while typing newline at position {}:{}",
+                        e,
+                        last_state.cursor.line,
+                        last_state.cursor.column
+                    );
+                    return None;
+                };
+                last_state.cursor.line += 1;
+                last_state.cursor.column = 0;
+            }
+            KeyCode::Backspace => {
+                let cursor = &mut last_state.cursor;
+                let start = if cursor.column > 0 {
+                    cursor.with_column(cursor.column - 1)
+                } else if cursor.line > 0 {
+                    let next_line = cursor.line - 1;
+                    let line_len = task.get_line_char_len(next_line);
+                    let line_len = match line_len {
+                        Err(e) => {
+                            log::error!(
+                                "invalid editor logic encountered '{}' while finding length of line {}",
+                                e,
+                                next_line,
+                            );
+                            return None;
+                        }
+                        Ok(v) => v,
+                    };
+                    (cursor.line - 1, line_len).into()
+                } else {
+                    *cursor
+                };
+                let end = *cursor;
+                let v = task.apply_edit(EditOp::Delete { start, end });
+                if let Err(e) = v {
+                    log::error!(
+                        "invalid editor logic encountered '{}' while deleting character in range {:?} to {:?}",
+                        e,
+                        start,
+                        end,
+                    );
+                    return None;
+                };
+                *cursor = start;
+            }
+            _ => return Some(Action::Unhandled),
         }
         None
     }
@@ -51,12 +155,9 @@ impl EditorTui {
     fn scroll_up(&mut self) {
         self.view_offset = self.view_offset.saturating_sub(1);
     }
-    fn scroll_down(&mut self) {
-        let Some(lines) = self.last_line_count else {
-            return;
-        };
+    fn scroll_down(&mut self, line_count: usize) {
         // Weird math to avoid panic.
-        self.view_offset = (self.view_offset + 2).min(lines).saturating_sub(1)
+        self.view_offset = (self.view_offset + 2).min(line_count).saturating_sub(1)
     }
 }
 
@@ -87,8 +188,8 @@ impl Widget for EditorWidget<'_> {
         if self.switched_text {
             // Scroll the bottommost text into view.
             self.editor.view_offset = self.text.line_len().max(height) - height;
+            self.editor.last_state = None
         }
-        self.editor.last_line_count = Some(self.text.line_len());
 
         let visible_lines = self
             .text

@@ -1,3 +1,5 @@
+pub mod editing;
+
 use std::{
     fmt::Display,
     fs::{OpenOptions, create_dir_all},
@@ -116,6 +118,10 @@ impl Data {
         &self.tasks
     }
 
+    pub fn tasks_mut(&mut self) -> &mut [Task] {
+        self.tasks.as_mut_slice()
+    }
+
     fn set_dirty(&mut self, index: usize) {
         self.tasks[index].dirty = true;
     }
@@ -169,11 +175,11 @@ impl Data {
 
 #[derive(Debug, Clone)]
 pub struct Task {
-    pub title: String,
-    pub created: Date,
-    pub boxes: Vec<BoxState>,
-    pub context: Rope,
-    pub completed: Option<Date>,
+    title: String,
+    created: Date,
+    boxes: Vec<BoxState>,
+    context: Rope,
+    completed: Option<Date>,
     source_path: Option<PathBuf>,
     dirty: bool,
     extra_fields: Vec<Field>,
@@ -196,6 +202,22 @@ impl Task {
             dirty: true,
             extra_fields: vec![],
         }
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+    pub fn created(&self) -> &Date {
+        &self.created
+    }
+    pub fn boxes(&self) -> &[BoxState] {
+        &self.boxes
+    }
+    pub fn context(&self) -> &Rope {
+        &self.context
+    }
+    pub fn completed(&self) -> &Option<Date> {
+        &self.completed
     }
 
     fn from_string(path: PathBuf, buf: String) -> Result<Self> {

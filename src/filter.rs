@@ -35,6 +35,10 @@ impl FilteredData {
         let i = self.visible.get(index)?;
         Some(&self.data.tasks()[*i])
     }
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut Task> {
+        let i = self.visible.get(index)?;
+        Some(&mut self.data.tasks_mut()[*i])
+    }
     pub fn set_completed(&mut self, index: usize, value: Option<Date>) {
         self.data.set_completed(self.visible[index], value);
     }

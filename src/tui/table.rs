@@ -127,7 +127,7 @@ impl Widget for TableWidget<'_, '_> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
         let TableWidget(table, focus, data) = self;
         let max_boxes =
-            data.iter().map(|t| t.boxes.len()).max().unwrap_or(0) * CHECK.chars().count();
+            data.iter().map(|t| t.boxes().len()).max().unwrap_or(0) * CHECK.chars().count();
         let list_split = [
             Constraint::Fill(1),
             Constraint::Min(17),
@@ -136,16 +136,16 @@ impl Widget for TableWidget<'_, '_> {
         let rows = data
             .iter()
             .map(|t| {
-                let text_cell = Cell::from(t.title.clone());
+                let text_cell = Cell::from(t.title().clone());
                 let completed_cell = Cell::from(
-                    t.completed
+                    t.completed()
                         .map(|d| d.format("%Y-%m-%m %H:%M").to_string())
                         .unwrap_or_default(),
                 )
                 .rapid_blink();
                 let box_cell = Cell::from(
                     Text::raw(
-                        t.boxes
+                        t.boxes()
                             .iter()
                             .rev()
                             .map(|b| match b {

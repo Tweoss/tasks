@@ -76,7 +76,11 @@ impl AppTui<'_> {
                 },
             },
             FocusState::Task(task_focus) => {
-                match self.task.handle_key_event(key_event, task_focus)? {
+                match self.task.handle_key_event(
+                    key_event,
+                    task_focus,
+                    self.table.selected().and_then(|i| data.get_mut(i)),
+                )? {
                     super::task::Action::Exit => self.focus = FocusState::List,
                     super::task::Action::Unhandled => {}
                 }
@@ -102,7 +106,6 @@ impl Default for AppTui<'_> {
 }
 
 pub struct AppWidget<'a, 'b>(pub Rc<RefCell<AppTui<'a>>>, pub &'b FilteredData);
-// pub struct AppWidget<'a, 'b>(pub RefMut<'a, AppTui<'b>>, pub &'a FilteredData);
 
 impl Widget for AppWidget<'_, '_> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
