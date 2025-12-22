@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Widget};
 
 use crate::filter::FilteredData;
-use crate::storage::{BoxState, Data, Task};
+use crate::storage::{BoxState, Task};
 use crate::tui::task::editor::{EditorFocus, EditorTui, EditorWidget};
 
 mod editor;
@@ -101,7 +101,7 @@ impl Widget for TaskWidget<'_, '_> {
         let [title_area, context_area, boxes_area] = layout.areas(area);
 
         let title_block = Block::bordered().title("Title");
-        Text::raw(v.title().clone()).render(title_block.inner(title_area), buf);
+        Text::raw(v.title()).render(title_block.inner(title_area), buf);
         title_block.render(title_area, buf);
 
         let context_block =
@@ -115,7 +115,7 @@ impl Widget for TaskWidget<'_, '_> {
         task.last_index = Some(index);
         EditorWidget {
             editor: &mut task.editor,
-            text: &v.context(),
+            text: v.context(),
             switched_text,
         }
         .render(context_block.inner(context_area), buf);

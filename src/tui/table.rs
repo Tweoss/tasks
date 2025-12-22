@@ -136,7 +136,7 @@ impl Widget for TableWidget<'_, '_> {
         let rows = data
             .iter()
             .map(|t| {
-                let text_cell = Cell::from(t.title().clone());
+                let text_cell = Cell::from(t.title());
                 let completed_cell = Cell::from(
                     t.completed()
                         .map(|d| d.format("%Y-%m-%m %H:%M").to_string())
