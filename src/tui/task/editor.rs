@@ -14,7 +14,7 @@ use ratatui::{
 use crate::{
     storage::{
         Task,
-        editing::{EditOp, Pos},
+        editing::{EditErr, EditOp, Pos},
     },
     tui::task::scrollbar::ScrollbarWidget,
 };
@@ -30,6 +30,32 @@ struct BufferState {
 
 pub enum Action {
     Unhandled,
+}
+
+macro_rules! unwrap {
+    ($v:expr, $event:expr, $cursor:expr, $msg: expr, $file: expr, $line: expr) => {
+        match $v {
+            Err(e) => {
+                log::error!(
+                    "[{}:{}] invalid editor logic encountered '{}' while handling '{}' at {:?}. {}",
+                    $file,
+                    $line,
+                    e,
+                    $event,
+                    $cursor,
+                    $msg
+                );
+                return None;
+            }
+            Ok(v) => v,
+        }
+    };
+    ($v:expr, $event:expr, $cursor:expr, $msg: expr) => {
+        unwrap!($v, $event, $cursor, $msg, file!(), line!())
+    };
+    ($v:expr, $event:expr, $cursor:expr) => {
+        unwrap!($v, $event, $cursor, "", file!(), line!())
+    };
 }
 
 impl EditorTui {
@@ -72,20 +98,11 @@ impl EditorTui {
             KeyCode::Esc => *focus = EditorFocus::Unlocked,
             KeyCode::Up => {
                 let cursor = &mut last_state.cursor;
+                unwrap!(Err(EditErr::OutOfBounds), key_event.code, cursor);
                 if cursor.line > 0 {
                     cursor.line -= 1;
-                    let line_len = task.get_line_char_len(cursor.line);
-                    let line_len = match line_len {
-                        Err(e) => {
-                            log::error!(
-                                "invalid editor logic encountered '{}' while moving up a line from cursor {:?}",
-                                e,
-                                cursor,
-                            );
-                            return None;
-                        }
-                        Ok(v) => v,
-                    };
+                    let line_len =
+                        unwrap!(task.get_line_char_len(cursor.line), key_event.code, cursor);
                     cursor.column = cursor.column.min(line_len);
                 }
             }
@@ -93,18 +110,8 @@ impl EditorTui {
                 let cursor = &mut last_state.cursor;
                 if cursor.line + 1 < task.context().line_len() {
                     cursor.line += 1;
-                    let line_len = task.get_line_char_len(cursor.line);
-                    let line_len = match line_len {
-                        Err(e) => {
-                            log::error!(
-                                "invalid editor logic encountered '{}' while moving down a line from cursor {:?}",
-                                e,
-                                cursor,
-                            );
-                            return None;
-                        }
-                        Ok(v) => v,
-                    };
+                    let line_len =
+                        unwrap!(task.get_line_char_len(cursor.line), key_event.code, cursor);
                     cursor.column = cursor.column.min(line_len);
                 } else if cursor.line + 1 == task.context().line_len()
                     && task.is_simulated_final_newline((cursor.line + 1, 0).into())
@@ -123,34 +130,12 @@ impl EditorTui {
                     return None;
                 }
                 cursor.line -= 1;
-                let line_len = task.get_line_char_len(cursor.line);
-                let line_len = match line_len {
-                    Err(e) => {
-                        log::error!(
-                            "invalid editor logic encountered '{}' while getting line length from cursor {:?}",
-                            e,
-                            cursor,
-                        );
-                        return None;
-                    }
-                    Ok(v) => v,
-                };
+                let line_len = unwrap!(task.get_line_char_len(cursor.line), key_event.code, cursor);
                 cursor.column = line_len;
             }
             KeyCode::Right => {
                 let cursor = &mut last_state.cursor;
-                let line_len = task.get_line_char_len(cursor.line);
-                let line_len = match line_len {
-                    Err(e) => {
-                        log::error!(
-                            "invalid editor logic encountered '{}' while getting line length from cursor {:?}",
-                            e,
-                            cursor,
-                        );
-                        return None;
-                    }
-                    Ok(v) => v,
-                };
+                let line_len = unwrap!(task.get_line_char_len(cursor.line), key_event.code, cursor);
                 if cursor.column + 1 < line_len {
                     cursor.column += 1;
                     return None;
@@ -163,36 +148,25 @@ impl EditorTui {
                 }
             }
             KeyCode::Char(c) => {
-                let v = task.apply_edit(EditOp::Insert {
-                    pos: last_state.cursor,
-                    text: c.to_string(),
-                });
-                if let Err(e) = v {
-                    log::error!(
-                        "invalid editor logic encountered '{}' while typing character '{}' at position {}:{}",
-                        e,
-                        c,
-                        last_state.cursor.line,
-                        last_state.cursor.column
-                    );
-                    return None;
-                };
+                unwrap!(
+                    task.apply_edit(EditOp::Insert {
+                        pos: last_state.cursor,
+                        text: c.to_string(),
+                    }),
+                    key_event.code,
+                    last_state.cursor
+                );
                 last_state.cursor.column += 1;
             }
             KeyCode::Enter => {
-                let v = task.apply_edit(EditOp::Insert {
-                    pos: last_state.cursor,
-                    text: "\n".to_string(),
-                });
-                if let Err(e) = v {
-                    log::error!(
-                        "invalid editor logic encountered '{}' while typing newline at position {}:{}",
-                        e,
-                        last_state.cursor.line,
-                        last_state.cursor.column
-                    );
-                    return None;
-                };
+                unwrap!(
+                    task.apply_edit(EditOp::Insert {
+                        pos: last_state.cursor,
+                        text: "\n".to_string(),
+                    }),
+                    key_event.code,
+                    last_state.cursor
+                );
                 last_state.cursor.line += 1;
                 last_state.cursor.column = 0;
             }
@@ -202,33 +176,18 @@ impl EditorTui {
                     cursor.with_column(cursor.column - 1)
                 } else if cursor.line > 0 {
                     let next_line = cursor.line - 1;
-                    let line_len = task.get_line_char_len(next_line);
-                    let line_len = match line_len {
-                        Err(e) => {
-                            log::error!(
-                                "invalid editor logic encountered '{}' while finding length of line {}",
-                                e,
-                                next_line,
-                            );
-                            return None;
-                        }
-                        Ok(v) => v,
-                    };
+                    let line_len =
+                        unwrap!(task.get_line_char_len(next_line), key_event.code, cursor);
                     (cursor.line - 1, line_len).into()
                 } else {
                     *cursor
                 };
                 let end = *cursor;
-                let v = task.apply_edit(EditOp::Delete { start, end });
-                if let Err(e) = v {
-                    log::error!(
-                        "invalid editor logic encountered '{}' while deleting character in range {:?} to {:?}",
-                        e,
-                        start,
-                        end,
-                    );
-                    return None;
-                };
+                unwrap!(
+                    task.apply_edit(EditOp::Delete { start, end }),
+                    key_event.code,
+                    cursor
+                );
                 *cursor = start;
             }
             _ => return None,
