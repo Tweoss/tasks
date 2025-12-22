@@ -36,13 +36,9 @@ impl Widget for ScrollbarWidget {
         let mut scrollbar = scrollbar.offset(Offset { x: 0, y: offset });
         scrollbar.height = fraction;
 
-        // // Testing UI (flip scrollbar)
-        // let bottom_margin = area.bottom() - scrollbar.bottom();
-        // scrollbar = Rect::new(scrollbar.x, area.y + bottom_margin, 1, scrollbar.height);
-
         buf.merge(&Buffer::filled(
             scrollbar,
-            Cell::new("▒").set_fg(Color::Gray).clone(),
+            Cell::new("¦").set_fg(Color::LightBlue).clone(),
         ));
     }
 }
