@@ -76,18 +76,31 @@ impl TaskFocus {
     pub fn context() -> Self {
         Self::Context(EditorFocus::Unlocked)
     }
+    pub fn as_editor(self) -> Option<EditorFocus> {
+        match self {
+            TaskFocus::Context(editor_focus) => Some(editor_focus),
+            _ => None,
+        }
+    }
 }
 
-pub struct TaskWidget<'a, 'b>(
-    pub &'a mut TaskTui,
-    pub &'b FilteredData,
-    pub Option<usize>,
-    pub Option<TaskFocus>,
-);
+pub struct TaskWidget<'a, 'b> {
+    pub task: &'a mut TaskTui,
+    pub data: &'b FilteredData,
+    pub index: Option<usize>,
+    pub focus: Option<TaskFocus>,
+    pub cursor_buf_pos: &'a mut Option<(u16, u16)>,
+}
 
 impl Widget for TaskWidget<'_, '_> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        let TaskWidget(task, data, index, focus) = self;
+        let TaskWidget {
+            task,
+            data,
+            index,
+            focus,
+            cursor_buf_pos,
+        } = self;
 
         let Some(index) = index else {
             return;
@@ -117,6 +130,8 @@ impl Widget for TaskWidget<'_, '_> {
             editor: &mut task.editor,
             text: v.context(),
             switched_text,
+            cursor_buf_pos,
+            focus: self.focus.and_then(|f| f.as_editor()),
         }
         .render(context_block.inner(context_area), buf);
         context_block.render(context_area, buf);

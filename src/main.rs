@@ -184,8 +184,16 @@ impl App {
         }
     }
     fn draw<'a>(&mut self, frame: &mut Frame, tui: Rc<RefCell<AppTui<'a>>>) {
-        let app_widget = AppWidget(tui.clone(), &self.data);
+        let mut cursor_buf_pos = None;
+        let app_widget = AppWidget {
+            app: tui.clone(),
+            data: &self.data,
+            cursor_buf_pos: &mut cursor_buf_pos,
+        };
         app_widget.render(frame.area(), frame.buffer_mut());
+        if let Some(position) = cursor_buf_pos {
+            frame.set_cursor_position(position);
+        }
     }
 
     fn handle_events<'a>(&mut self, tui: Rc<RefCell<AppTui<'a>>>) {

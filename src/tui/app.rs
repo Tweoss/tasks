@@ -105,11 +105,19 @@ impl Default for AppTui<'_> {
     }
 }
 
-pub struct AppWidget<'a, 'b>(pub Rc<RefCell<AppTui<'a>>>, pub &'b FilteredData);
+pub struct AppWidget<'a, 'b> {
+    pub app: Rc<RefCell<AppTui<'a>>>,
+    pub data: &'b FilteredData,
+    pub cursor_buf_pos: &'b mut Option<(u16, u16)>,
+}
 
 impl Widget for AppWidget<'_, '_> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        let AppWidget(app, data) = self;
+        let AppWidget {
+            app,
+            data,
+            cursor_buf_pos,
+        } = self;
         // In future, can match on focus to change layout.
         let task_split = Layout::horizontal(Constraint::from_fills([1, 1])).split(area);
         {
@@ -121,7 +129,14 @@ impl Widget for AppWidget<'_, '_> {
         let mut app = app.borrow_mut();
         let selected = app.table.selected();
         let focus_state = app.focus.clone();
-        TaskWidget(&mut app.task, data, selected, focus_state.as_task()).render(task_split[1], buf);
+        TaskWidget {
+            task: &mut app.task,
+            data,
+            index: selected,
+            focus: focus_state.as_task(),
+            cursor_buf_pos,
+        }
+        .render(task_split[1], buf);
 
         match app.focus.clone() {
             FocusState::List => {}

@@ -1,6 +1,11 @@
+use std::io;
+
 use crop::Rope;
 use ratatui::{
-    crossterm::event::{KeyCode, KeyEvent},
+    crossterm::{
+        cursor::SetCursorStyle,
+        event::{KeyCode, KeyEvent},
+    },
     layout::{Constraint, Layout},
     style::Style,
     widgets::Widget,
@@ -16,7 +21,7 @@ use crate::{
 
 pub struct EditorTui {
     view_offset: usize,
-    last_state: Option<BufferState>,
+    last_state: BufferState,
 }
 
 struct BufferState {
@@ -31,7 +36,9 @@ impl EditorTui {
     pub fn new() -> Self {
         Self {
             view_offset: 0,
-            last_state: None,
+            last_state: BufferState {
+                cursor: (0, 0).into(),
+            },
         }
     }
 
@@ -59,25 +66,102 @@ impl EditorTui {
         let Some(task) = task else {
             return Some(Action::Unhandled);
         };
-        let line_count = task.context().line_len();
 
-        // Put cursor at end of task if not already created.
-        let last_state = self.last_state.get_or_insert(BufferState {
-            cursor: (
-                line_count.saturating_sub(1),
-                task.context()
-                    .lines()
-                    .next_back()
-                    .map(|l| l.chars().count())
-                    .unwrap_or(0),
-            )
-                .into(),
-        });
-
+        let last_state = &mut self.last_state;
         match key_event.code {
             KeyCode::Esc => *focus = EditorFocus::Unlocked,
-            KeyCode::Up => self.scroll_up(),
-            KeyCode::Down => self.scroll_down(line_count),
+            KeyCode::Up => {
+                let cursor = &mut last_state.cursor;
+                if cursor.line > 0 {
+                    cursor.line -= 1;
+                    let line_len = task.get_line_char_len(cursor.line);
+                    let line_len = match line_len {
+                        Err(e) => {
+                            log::error!(
+                                "invalid editor logic encountered '{}' while moving up a line from cursor {:?}",
+                                e,
+                                cursor,
+                            );
+                            return None;
+                        }
+                        Ok(v) => v,
+                    };
+                    cursor.column = cursor.column.min(line_len);
+                }
+            }
+            KeyCode::Down => {
+                let cursor = &mut last_state.cursor;
+                if cursor.line + 1 < task.context().line_len() {
+                    cursor.line += 1;
+                    let line_len = task.get_line_char_len(cursor.line);
+                    let line_len = match line_len {
+                        Err(e) => {
+                            log::error!(
+                                "invalid editor logic encountered '{}' while moving down a line from cursor {:?}",
+                                e,
+                                cursor,
+                            );
+                            return None;
+                        }
+                        Ok(v) => v,
+                    };
+                    cursor.column = cursor.column.min(line_len);
+                } else if cursor.line + 1 == task.context().line_len()
+                    && task.is_simulated_final_newline((cursor.line + 1, 0).into())
+                {
+                    cursor.line += 1;
+                    cursor.column = 0;
+                }
+            }
+            KeyCode::Left => {
+                let cursor = &mut last_state.cursor;
+                if cursor.column > 0 {
+                    cursor.column -= 1;
+                    return None;
+                }
+                if cursor.line == 0 {
+                    return None;
+                }
+                cursor.line -= 1;
+                let line_len = task.get_line_char_len(cursor.line);
+                let line_len = match line_len {
+                    Err(e) => {
+                        log::error!(
+                            "invalid editor logic encountered '{}' while getting line length from cursor {:?}",
+                            e,
+                            cursor,
+                        );
+                        return None;
+                    }
+                    Ok(v) => v,
+                };
+                cursor.column = line_len;
+            }
+            KeyCode::Right => {
+                let cursor = &mut last_state.cursor;
+                let line_len = task.get_line_char_len(cursor.line);
+                let line_len = match line_len {
+                    Err(e) => {
+                        log::error!(
+                            "invalid editor logic encountered '{}' while getting line length from cursor {:?}",
+                            e,
+                            cursor,
+                        );
+                        return None;
+                    }
+                    Ok(v) => v,
+                };
+                if cursor.column + 1 < line_len {
+                    cursor.column += 1;
+                    return None;
+                }
+                let next_line: Pos = (cursor.line + 1, 0).into();
+                if next_line.line < task.context().line_len()
+                    || task.is_simulated_final_newline(next_line)
+                {
+                    *cursor = next_line;
+                }
+            }
             KeyCode::Char(c) => {
                 let v = task.apply_edit(EditOp::Insert {
                     pos: last_state.cursor,
@@ -147,7 +231,7 @@ impl EditorTui {
                 };
                 *cursor = start;
             }
-            _ => return Some(Action::Unhandled),
+            _ => return None,
         }
         None
     }
@@ -172,6 +256,8 @@ pub struct EditorWidget<'a> {
     pub editor: &'a mut EditorTui,
     pub text: &'a Rope,
     pub switched_text: bool,
+    pub cursor_buf_pos: &'a mut Option<(u16, u16)>,
+    pub focus: Option<EditorFocus>,
 }
 
 impl Widget for EditorWidget<'_> {
@@ -186,9 +272,36 @@ impl Widget for EditorWidget<'_> {
 
         let height = text_area.height as usize;
         if self.switched_text {
-            // Scroll the bottommost text into view.
-            self.editor.view_offset = self.text.line_len().max(height) - height;
-            self.editor.last_state = None
+            let line_count = self.text.line_len();
+            // Put cursor at end of task.
+            self.editor.last_state = BufferState {
+                cursor: (
+                    line_count.saturating_sub(1),
+                    self.text
+                        .lines()
+                        .next_back()
+                        .map(|l| l.chars().count())
+                        .unwrap_or(0),
+                )
+                    .into(),
+            };
+        }
+        // Scroll the cursor into view.
+        let cursor = self.editor.last_state.cursor;
+        if cursor.line < self.editor.view_offset {
+            self.editor.view_offset = cursor.line;
+        }
+        if cursor.line >= self.editor.view_offset + height {
+            self.editor.view_offset += 1 + cursor.line - self.editor.view_offset - height;
+        }
+        if let Some(EditorFocus::Locked) = self.focus {
+            *self.cursor_buf_pos = Some((
+                (text_area.x as usize + cursor.column) as u16,
+                (text_area.y as usize + cursor.line - self.editor.view_offset) as u16,
+            ));
+            if let Err(e) = ratatui::crossterm::execute!(io::stdout(), SetCursorStyle::SteadyBar) {
+                log::error!("failed to set cursor style {e}");
+            }
         }
 
         let visible_lines = self
