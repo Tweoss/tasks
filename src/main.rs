@@ -230,7 +230,6 @@ fn setup_logger(config: &Config) -> Result<(), eyre::Report> {
             ))
         })
         .level(log::LevelFilter::Debug)
-        .chain(std::io::stdout())
         .chain(
             fern::log_file(&log_file)
                 .wrap_err_with(|| format!("opening {}", log_file.display()))?,

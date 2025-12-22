@@ -4,7 +4,7 @@ use std::{
 };
 
 use ratatui::{
-    crossterm::event::{KeyCode, KeyEvent},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Layout},
     widgets::Widget,
 };
@@ -54,6 +54,12 @@ impl AppTui<'_> {
         data: &mut FilteredData,
         key_event: KeyEvent,
     ) -> Option<Action> {
+        if key_event.code == KeyCode::Char('c')
+            && key_event.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            return Some(Action::Exit);
+        }
+
         match &mut self.focus {
             FocusState::List => match self.table.handle_key_event(data, key_event)? {
                 super::table::Action::Add => {
@@ -63,7 +69,9 @@ impl AppTui<'_> {
                     KeyCode::Char('q') => {
                         self.focus = FocusState::Popup(PopupEnum::WritePopup(SaveDialog {}))
                     }
-                    KeyCode::Enter => self.focus = FocusState::Task(TaskFocus::Context),
+                    KeyCode::Enter | KeyCode::Right => {
+                        self.focus = FocusState::Task(TaskFocus::context())
+                    }
                     _ => (),
                 },
             },
@@ -107,14 +115,10 @@ impl Widget for AppWidget<'_, '_> {
                 RefMut::map_split(app.borrow_mut(), |a| (&mut a.table, &mut a.focus));
             TableWidget(&mut table, &focus, data).render(task_split[0], buf);
         }
-        let app = app.borrow_mut();
-        TaskWidget(
-            &app.task,
-            data,
-            app.table.selected(),
-            app.focus.clone().as_task(),
-        )
-        .render(task_split[1], buf);
+        let mut app = app.borrow_mut();
+        let selected = app.table.selected();
+        let focus_state = app.focus.clone();
+        TaskWidget(&mut app.task, data, selected, focus_state.as_task()).render(task_split[1], buf);
 
         match app.focus.clone() {
             FocusState::List => {}
