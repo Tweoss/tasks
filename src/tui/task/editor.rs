@@ -1,6 +1,5 @@
 use std::io;
 
-use chumsky::text::Char;
 use crop::Rope;
 use ratatui::{
     crossterm::{

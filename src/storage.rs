@@ -219,7 +219,7 @@ impl Task {
         &self.boxes
     }
     pub fn context(&self) -> &Rope {
-        &self.context.inner()
+        self.context.inner()
     }
     pub fn completed(&self) -> &Option<Date> {
         &self.completed
