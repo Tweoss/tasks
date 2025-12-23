@@ -1,7 +1,7 @@
 use chrono::Local;
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{KeyCode, KeyEvent},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Flex, Layout, Rect},
     text::Text,
     widgets::{Block, Clear, Widget},
@@ -47,13 +47,13 @@ pub enum SaveAction {
     Write,
     Exit,
 }
-const POPUP_TEXT: &str = "write(w), write and exit(y), exit(n)\nESC to cancel";
+const POPUP_TEXT: &str = "write(,), write and exit(q), exit(Q)\nESC to cancel";
 impl Popup for SaveDialog {
     const TITLE: &str = "Exit Popup";
     type Action = SaveAction;
 
     fn draw_in_rect(&self, area: Rect, buf: &mut Buffer) {
-        Text::raw("write(w), write and exit(y), exit(n)\nESC to cancel").render(area, buf);
+        Text::raw(POPUP_TEXT).render(area, buf);
     }
 
     fn get_dimensions(&self, _: Rect) -> (u16, u16) {
@@ -65,9 +65,11 @@ impl Popup for SaveDialog {
 
     fn handle_key(&mut self, key_event: KeyEvent) -> SaveAction {
         match key_event.code {
-            KeyCode::Char('y') => SaveAction::Exit,
-            KeyCode::Char('n') => SaveAction::ExitNoWrite,
-            KeyCode::Char('w') => SaveAction::Write,
+            KeyCode::Char('q') if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
+                SaveAction::ExitNoWrite
+            }
+            KeyCode::Char('q') => SaveAction::Exit,
+            KeyCode::Char(',') => SaveAction::Write,
             _ => SaveAction::Unhandled,
         }
     }

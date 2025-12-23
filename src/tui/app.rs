@@ -66,7 +66,7 @@ impl AppTui<'_> {
                     self.focus = FocusState::Popup(PopupEnum::AddNew(Default::default()))
                 }
                 super::table::Action::Unhandled => match key_event.code {
-                    KeyCode::Char('q') => {
+                    KeyCode::Char(' ') => {
                         self.focus = FocusState::Popup(PopupEnum::WritePopup(SaveDialog {}))
                     }
                     KeyCode::Enter | KeyCode::Right => {
