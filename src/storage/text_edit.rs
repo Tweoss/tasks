@@ -9,24 +9,25 @@ use crate::storage::{
 };
 
 macro_rules! unwrap {
-    ($v:expr, $event:expr, $cursor:expr, $file: expr, $line: expr) => {
+    ($v:expr, $event:expr, $cursor:expr, $file: expr, $line: expr, $text: expr) => {
         match $v {
             Err(e) => {
                 log::error!(
-                    "[{}:{}] invalid editor logic encountered '{}' while handling '{:?}' at {:?}",
+                    "[{}:{}] invalid editor logic encountered '{}' while handling '{:?}' at {:?}. text has value (\"{}\")",
                     $file,
                     $line,
                     e,
                     $event,
                     $cursor,
+                    $text.inner().to_string().escape_debug(),
                 );
                 return (crate::storage::editing::EditResult::Noop, None);
             }
             Ok(v) => v,
         }
     };
-    ($v:expr, $event:expr, $cursor:expr) => {
-        unwrap!($v, $event, $cursor, file!(), line!())
+    ($v:expr, $event:expr, $cursor:expr, $text:expr) => {
+        unwrap!($v, $event, $cursor, file!(), line!(), $text)
     };
 }
 
@@ -46,26 +47,27 @@ impl TextEditable {
                     MoveDir::Up => {
                         if cursor.line > 0 {
                             cursor.line -= 1;
-                            let char_len = unwrap!(text.get_line_char_len(cursor.line), op, cursor);
+                            let char_len =
+                                unwrap!(text.get_line_char_len(cursor.line), op, cursor, text);
                             cursor.column = cursor.column.min(char_len);
                         }
                     }
                     MoveDir::Down => {
                         if cursor.line < text.inner().line_len() {
                             cursor.line += 1;
-                            let char_len = unwrap!(text.get_line_char_len(cursor.line), op, cursor);
+                            let char_len =
+                                unwrap!(text.get_line_char_len(cursor.line), op, cursor, text);
                             cursor.column = cursor.column.min(char_len);
                         }
                     }
-                    MoveDir::Horizontal { unit, dir } => match unit {
-                        Unit::Char => {
-                            cursor = unwrap!(self.saturating_offset_pos(cursor, dir), op, cursor)
-                        }
-                        Unit::Word => {
-                            cursor = unwrap!(self.saturating_word_boundary(cursor, dir), op, cursor)
-                        }
-                        Unit::Line => todo!(),
-                    },
+                    MoveDir::Horizontal { unit, dir } => {
+                        cursor = unwrap!(
+                            self.saturating_offset(cursor, unit, dir),
+                            op,
+                            cursor,
+                            self.0
+                        );
+                    }
                 }
 
                 (EditResult::Noop, Some(cursor))
@@ -78,7 +80,8 @@ impl TextEditable {
                         text: t.clone().to_string()
                     }),
                     op,
-                    cursor
+                    cursor,
+                    text
                 );
                 let new_lines = t.chars().filter(|c| c.is_newline()).count();
                 let new_column = if new_lines == 0 {
@@ -91,21 +94,23 @@ impl TextEditable {
                 (EditResult::Dirty, Some(cursor))
             }
             TextOp::Delete { unit, dir } => {
-                let other = match unit {
-                    Unit::Char => {
-                        unwrap!(self.saturating_offset_pos(cursor, dir), op, cursor)
-                    }
-                    Unit::Word => {
-                        unwrap!(self.saturating_word_boundary(cursor, dir), op, cursor)
-                    }
-                    Unit::Line => todo!(),
-                };
+                let other = unwrap!(
+                    self.saturating_offset(cursor, unit, dir),
+                    op,
+                    cursor,
+                    self.0
+                );
                 let (start, end) = match dir {
                     LeftRight::Left => (other, cursor),
                     LeftRight::Right => (cursor, other),
                 };
                 let text = &mut self.0;
-                unwrap!(text.apply_edit(EditOp::Delete { start, end }), op, cursor);
+                unwrap!(
+                    text.apply_edit(EditOp::Delete { start, end }),
+                    op,
+                    cursor,
+                    text
+                );
                 (
                     EditResult::Dirty,
                     Some(match dir {
@@ -117,7 +122,15 @@ impl TextEditable {
         }
     }
 
-    fn saturating_offset_pos(&self, cursor: Pos, dir: LeftRight) -> Result<Pos, EditErr> {
+    fn saturating_offset(&self, cursor: Pos, unit: Unit, dir: LeftRight) -> Result<Pos, EditErr> {
+        match unit {
+            Unit::Char => self.saturating_char_offset(cursor, dir),
+            Unit::Word => self.saturating_word_boundary(cursor, dir),
+            Unit::Line => self.saturating_line_boundary(cursor, dir),
+        }
+    }
+
+    fn saturating_char_offset(&self, cursor: Pos, dir: LeftRight) -> Result<Pos, EditErr> {
         let text = &self.0;
         let byte = text.get_byte(cursor)?;
         match dir {
@@ -195,6 +208,27 @@ impl TextEditable {
                 count += c.len_utf8();
             }
             count
+        }
+        let byte = self.0.get_byte(cursor)?;
+        match dir {
+            LeftRight::Left => self.0.pos_from_byte(
+                byte - count_bytes_till_boundary(self.0.inner().byte_slice(..byte).chars().rev()),
+            ),
+            LeftRight::Right => self.0.pos_from_byte(
+                byte + count_bytes_till_boundary(self.0.inner().byte_slice(byte..).chars()),
+            ),
+        }
+    }
+
+    fn saturating_line_boundary(&self, cursor: Pos, dir: LeftRight) -> Result<Pos, EditErr> {
+        fn count_bytes_till_boundary(mut it: impl Iterator<Item = char> + Clone) -> usize {
+            // delete until we hit a newline, or delete the newline
+            if it.clone().next().is_some_and(|c| c.is_newline()) {
+                return it.next().unwrap().len_utf8();
+            }
+            it.take_while(|c| !c.is_newline())
+                .map(|c| c.len_utf8())
+                .sum()
         }
         let byte = self.0.get_byte(cursor)?;
         match dir {

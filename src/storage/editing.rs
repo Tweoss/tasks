@@ -7,10 +7,14 @@ use super::Task;
 impl Task {
     pub fn handle_key_event(&mut self, cursor: Pos, key_event: KeyEvent) -> Option<Pos> {
         let alt = key_event.modifiers.contains(KeyModifiers::ALT);
-        // let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+        let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
         let op = match key_event.code {
             KeyCode::Up => TextOp::Move(MoveDir::Up),
             KeyCode::Down => TextOp::Move(MoveDir::Down),
+            KeyCode::Char('a') if ctrl => TextOp::Move(MoveDir::Horizontal {
+                unit: Unit::Line,
+                dir: LeftRight::Left,
+            }),
             KeyCode::Char('b') if alt => TextOp::Move(MoveDir::Horizontal {
                 unit: Unit::Word,
                 dir: LeftRight::Left,
@@ -18,6 +22,10 @@ impl Task {
             KeyCode::Left => TextOp::Move(MoveDir::Horizontal {
                 unit: Unit::Char,
                 dir: LeftRight::Left,
+            }),
+            KeyCode::Char('e') if ctrl => TextOp::Move(MoveDir::Horizontal {
+                unit: Unit::Line,
+                dir: LeftRight::Right,
             }),
             KeyCode::Char('f') if alt => TextOp::Move(MoveDir::Horizontal {
                 unit: Unit::Word,
@@ -28,6 +36,10 @@ impl Task {
                 dir: LeftRight::Right,
             }),
             KeyCode::Enter => TextOp::InsertText("\n".into()),
+            KeyCode::Char('u') if ctrl => TextOp::Delete {
+                unit: Unit::Line,
+                dir: LeftRight::Left,
+            },
             KeyCode::Backspace if alt => TextOp::Delete {
                 unit: Unit::Word,
                 dir: LeftRight::Left,
@@ -36,11 +48,15 @@ impl Task {
                 unit: Unit::Char,
                 dir: LeftRight::Left,
             },
+            KeyCode::Delete => TextOp::Delete {
+                unit: Unit::Line,
+                dir: LeftRight::Right,
+            },
             KeyCode::Char('d') if alt => TextOp::Delete {
                 unit: Unit::Word,
                 dir: LeftRight::Right,
             },
-            KeyCode::Delete => TextOp::Delete {
+            KeyCode::Char('d') if ctrl => TextOp::Delete {
                 unit: Unit::Char,
                 dir: LeftRight::Right,
             },
