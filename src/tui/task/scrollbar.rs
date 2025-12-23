@@ -29,7 +29,7 @@ impl Widget for ScrollbarWidget {
         let offset = view_offset as f32 / scrollable_line_count as f32;
         let fraction = visible_lines as f32 / scrollable_line_count as f32;
 
-        let offset = (offset * height as f32).round() as i32;
+        let offset = (offset * height as f32).ceil() as i32;
         let fraction = ((fraction * height as f32) as u16).max(1);
 
         let scrollbar = area;
