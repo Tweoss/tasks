@@ -9,7 +9,7 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 use tui_textarea::TextArea;
 
-use crate::{FocusState, Task};
+use crate::Task;
 
 pub trait Popup {
     const TITLE: &str;
@@ -128,14 +128,14 @@ impl Widget for &AddDialog<'_> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ErrorDialog<'a> {
+pub struct ErrorDialog {
     pub error: String,
-    pub previous_state: Option<Box<FocusState<'a>>>,
+    // pub previous_state: Option<Box<FocusState<'a>>>,
 }
 pub enum ErrorAction {
     Okay,
 }
-impl<'a> Popup for ErrorDialog<'a> {
+impl<'a> Popup for ErrorDialog {
     const TITLE: &'static str = "Error Popup";
     type Action = ErrorAction;
 
@@ -154,7 +154,7 @@ impl<'a> Popup for ErrorDialog<'a> {
         ErrorAction::Okay
     }
 }
-impl Widget for &ErrorDialog<'_> {
+impl Widget for &ErrorDialog {
     fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
         render(self, area, buf)
     }
@@ -162,11 +162,10 @@ impl Widget for &ErrorDialog<'_> {
 
 const MAX_ERROR_WIDTH: usize = 80;
 
-impl<'a> ErrorDialog<'a> {
-    pub fn from_error_focus(error: &eyre::Report, focus: FocusState<'a>) -> Self {
+impl ErrorDialog {
+    pub fn from_error_focus(error: &eyre::Report) -> Self {
         Self {
             error: textwrap::fill(&format!("{:?}", error), MAX_ERROR_WIDTH),
-            previous_state: Some(Box::new(focus)),
         }
     }
 }

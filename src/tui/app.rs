@@ -43,10 +43,10 @@ impl AppTui<'_> {
     }
 
     pub fn set_error_focus(&mut self, error: eyre::Report) {
-        self.focus = FocusState::Popup(PopupEnum::Error(ErrorDialog::from_error_focus(
-            &error,
-            self.focus.clone(),
-        )));
+        self.focus = FocusState::Popup {
+            popup: PopupEnum::Error(ErrorDialog::from_error_focus(&error)),
+            last_focus: FocusState::default().into(),
+        };
     }
 
     pub fn handle_key_event(
@@ -63,15 +63,20 @@ impl AppTui<'_> {
         match &mut self.focus {
             FocusState::List => match self.table.handle_key_event(data, key_event)? {
                 super::table::Action::Add => {
-                    self.focus = FocusState::Popup(PopupEnum::AddNew(Default::default()))
+                    self.focus = FocusState::Popup {
+                        popup: PopupEnum::AddNew(Default::default()),
+                        last_focus: self.focus.clone().into(),
+                    }
                 }
                 super::table::Action::Unhandled => match key_event.code {
                     KeyCode::Char(' ') => {
-                        self.focus = FocusState::Popup(PopupEnum::WritePopup(SaveDialog {}))
+                        self.focus = FocusState::Popup {
+                            popup: PopupEnum::WritePopup(SaveDialog {}),
+                            last_focus: self.focus.clone().into(),
+                        }
                     }
-                    KeyCode::Enter | KeyCode::Right => {
-                        self.focus = FocusState::Task(TaskFocus::context())
-                    }
+                    KeyCode::Enter => self.focus = FocusState::Task(TaskFocus::context_locked()),
+                    KeyCode::Right => self.focus = FocusState::Task(TaskFocus::context_unlocked()),
                     _ => (),
                 },
             },
@@ -82,10 +87,18 @@ impl AppTui<'_> {
                     self.table.selected().and_then(|i| data.get_mut(i)),
                 )? {
                     super::task::Action::Exit => self.focus = FocusState::List,
-                    super::task::Action::Unhandled => {}
+                    super::task::Action::Unhandled => match key_event.code {
+                        KeyCode::Char(' ') => {
+                            self.focus = FocusState::Popup {
+                                popup: PopupEnum::WritePopup(SaveDialog {}),
+                                last_focus: self.focus.clone().into(),
+                            }
+                        }
+                        _ => return Some(Action::Unhandled),
+                    },
                 }
             }
-            FocusState::Popup(_) => {
+            FocusState::Popup { .. } => {
                 match self
                     .popup
                     .handle_key_event(&mut self.focus, data, key_event)?
@@ -141,7 +154,10 @@ impl Widget for AppWidget<'_, '_> {
         match app.focus.clone() {
             FocusState::List => {}
             FocusState::Task(_) => {}
-            FocusState::Popup(p) => PopupWidget(&p).render(area, buf),
+            FocusState::Popup {
+                popup: p,
+                last_focus: _,
+            } => PopupWidget(&p).render(area, buf),
         }
     }
 }

@@ -73,8 +73,11 @@ impl TaskFocus {
             _ => unreachable!(),
         }
     }
-    pub fn context() -> Self {
-        Self::Context(EditorFocus::Unlocked)
+    pub fn context_locked() -> Self {
+        Self::Context(EditorFocus::Locked)
+    }
+    pub fn context_unlocked() -> Self {
+        Self::Context(EditorFocus::Locked)
     }
     pub fn as_editor(self) -> Option<EditorFocus> {
         match self {

@@ -27,7 +27,11 @@ impl PopupTui {
         data: &mut FilteredData,
         key_event: KeyEvent,
     ) -> Option<Action> {
-        let FocusState::Popup(p) = focus else {
+        let FocusState::Popup {
+            popup: p,
+            last_focus,
+        } = focus
+        else {
             return None;
         };
         use AddAction as AA;
@@ -37,35 +41,37 @@ impl PopupTui {
                 (SA::ExitNoWrite, _) => return Some(Action::Exit),
                 (SA::Write, _) => {
                     if let Err(e) = data.write_dirty() {
-                        *focus = FocusState::Popup(PopupEnum::Error(
-                            ErrorDialog::from_error_focus(&e, focus.clone()),
-                        ));
+                        *focus = FocusState::Popup {
+                            popup: PopupEnum::Error(ErrorDialog::from_error_focus(&e)),
+                            last_focus: focus.clone().into(),
+                        };
                     } else {
-                        *focus = FocusState::List;
+                        *focus = *last_focus.clone();
                     }
                 }
                 (SA::Exit, _) => {
                     if let Err(e) = data.write_dirty() {
-                        *focus = FocusState::Popup(PopupEnum::Error(
-                            ErrorDialog::from_error_focus(&e, focus.clone()),
-                        ));
+                        *focus = FocusState::Popup {
+                            popup: PopupEnum::Error(ErrorDialog::from_error_focus(&e)),
+                            last_focus: focus.clone().into(),
+                        };
                     } else {
                         return Some(Action::Exit);
                     }
                 }
-                (SA::Unhandled, KeyCode::Esc) => *focus = FocusState::List,
+                (SA::Unhandled, KeyCode::Esc) => *focus = *last_focus.clone(),
                 (SA::Unhandled, _) => return Some(Action::Unhandled),
             },
             PopupEnum::AddNew(add) => match (add.handle_key(key_event), key_event.code) {
-                (Some(AA::Exit), _) => *focus = FocusState::List,
+                (Some(AA::Exit), _) => *focus = *last_focus.clone(),
                 (Some(AA::Add(t)), _) => {
                     data.push(t);
-                    *focus = FocusState::List;
+                    *focus = *last_focus.clone();
                 }
                 (None, _) => {}
             },
             PopupEnum::Error(error) => match error.handle_key(key_event) {
-                ErrorAction::Okay => *focus = *error.previous_state.take().unwrap_or_default(),
+                ErrorAction::Okay => *focus = *last_focus.clone(),
             },
         }
         None

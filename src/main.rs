@@ -121,7 +121,10 @@ pub enum FocusState<'a> {
     #[default]
     List,
     Task(TaskFocus),
-    Popup(PopupEnum<'a>),
+    Popup {
+        popup: PopupEnum<'a>,
+        last_focus: Box<FocusState<'a>>,
+    },
 }
 
 impl FocusState<'_> {
@@ -137,7 +140,7 @@ impl FocusState<'_> {
 pub enum PopupEnum<'a> {
     WritePopup(SaveDialog),
     AddNew(AddDialog<'a>),
-    Error(ErrorDialog<'a>),
+    Error(ErrorDialog),
 }
 
 impl App {
