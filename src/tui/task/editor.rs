@@ -1,21 +1,19 @@
 use std::io;
 
+use chumsky::text::Char;
 use crop::Rope;
 use ratatui::{
     crossterm::{
         cursor::SetCursorStyle,
-        event::{KeyCode, KeyEvent},
+        event::{KeyCode, KeyEvent, KeyModifiers},
     },
     layout::{Constraint, Layout},
-    style::Style,
+    style::{Color, Style},
     widgets::Widget,
 };
 
 use crate::{
-    storage::{
-        Task,
-        editing::{EditErr, EditOp, Pos},
-    },
+    storage::{Task, editing::Pos},
     tui::task::scrollbar::ScrollbarWidget,
 };
 
@@ -30,32 +28,6 @@ struct BufferState {
 
 pub enum Action {
     Unhandled,
-}
-
-macro_rules! unwrap {
-    ($v:expr, $event:expr, $cursor:expr, $msg: expr, $file: expr, $line: expr) => {
-        match $v {
-            Err(e) => {
-                log::error!(
-                    "[{}:{}] invalid editor logic encountered '{}' while handling '{}' at {:?}. {}",
-                    $file,
-                    $line,
-                    e,
-                    $event,
-                    $cursor,
-                    $msg
-                );
-                return None;
-            }
-            Ok(v) => v,
-        }
-    };
-    ($v:expr, $event:expr, $cursor:expr, $msg: expr) => {
-        unwrap!($v, $event, $cursor, $msg, file!(), line!())
-    };
-    ($v:expr, $event:expr, $cursor:expr) => {
-        unwrap!($v, $event, $cursor, "", file!(), line!())
-    };
 }
 
 impl EditorTui {
@@ -93,104 +65,16 @@ impl EditorTui {
             return Some(Action::Unhandled);
         };
 
-        let last_state = &mut self.last_state;
+        let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
         match key_event.code {
             KeyCode::Esc => *focus = EditorFocus::Unlocked,
-            KeyCode::Up => {
-                let cursor = &mut last_state.cursor;
-                unwrap!(Err(EditErr::OutOfBounds), key_event.code, cursor);
-                if cursor.line > 0 {
-                    cursor.line -= 1;
-                    let line_len =
-                        unwrap!(task.get_line_char_len(cursor.line), key_event.code, cursor);
-                    cursor.column = cursor.column.min(line_len);
+            KeyCode::Char('j') if ctrl => self.scroll_down(task.context().line_len() + 1),
+            KeyCode::Char('k') if ctrl => self.scroll_up(),
+            _ => {
+                if let Some(new_pos) = task.handle_key_event(self.last_state.cursor, key_event) {
+                    self.last_state.cursor = new_pos;
                 }
             }
-            KeyCode::Down => {
-                let cursor = &mut last_state.cursor;
-                if cursor.line + 1 < task.context().line_len() {
-                    cursor.line += 1;
-                    let line_len =
-                        unwrap!(task.get_line_char_len(cursor.line), key_event.code, cursor);
-                    cursor.column = cursor.column.min(line_len);
-                } else if cursor.line + 1 == task.context().line_len()
-                    && task.is_simulated_final_newline((cursor.line + 1, 0).into())
-                {
-                    cursor.line += 1;
-                    cursor.column = 0;
-                }
-            }
-            KeyCode::Left => {
-                let cursor = &mut last_state.cursor;
-                if cursor.column > 0 {
-                    cursor.column -= 1;
-                    return None;
-                }
-                if cursor.line == 0 {
-                    return None;
-                }
-                cursor.line -= 1;
-                let line_len = unwrap!(task.get_line_char_len(cursor.line), key_event.code, cursor);
-                cursor.column = line_len;
-            }
-            KeyCode::Right => {
-                let cursor = &mut last_state.cursor;
-                let line_len = unwrap!(task.get_line_char_len(cursor.line), key_event.code, cursor);
-                if cursor.column + 1 < line_len {
-                    cursor.column += 1;
-                    return None;
-                }
-                let next_line: Pos = (cursor.line + 1, 0).into();
-                if next_line.line < task.context().line_len()
-                    || task.is_simulated_final_newline(next_line)
-                {
-                    *cursor = next_line;
-                }
-            }
-            KeyCode::Char(c) => {
-                unwrap!(
-                    task.apply_edit(EditOp::Insert {
-                        pos: last_state.cursor,
-                        text: c.to_string(),
-                    }),
-                    key_event.code,
-                    last_state.cursor
-                );
-                last_state.cursor.column += 1;
-            }
-            KeyCode::Enter => {
-                unwrap!(
-                    task.apply_edit(EditOp::Insert {
-                        pos: last_state.cursor,
-                        text: "\n".to_string(),
-                    }),
-                    key_event.code,
-                    last_state.cursor
-                );
-                last_state.cursor.line += 1;
-                last_state.cursor.column = 0;
-            }
-            KeyCode::Backspace => {
-                let cursor = &mut last_state.cursor;
-                let start = if cursor.column > 0 {
-                    cursor.with_column(cursor.column - 1)
-                } else if cursor.line > 0 {
-                    let next_line = cursor.line - 1;
-                    let line_len =
-                        unwrap!(task.get_line_char_len(next_line), key_event.code, cursor);
-                    (cursor.line - 1, line_len).into()
-                } else {
-                    *cursor
-                };
-                let end = *cursor;
-                unwrap!(
-                    task.apply_edit(EditOp::Delete { start, end }),
-                    key_event.code,
-                    cursor
-                );
-                *cursor = start;
-            }
-            _ => return None,
         }
         None
     }
@@ -229,6 +113,7 @@ impl Widget for EditorWidget<'_> {
         .split(area);
         let (scroll_area, text_area) = (layout[0], layout[2]);
 
+        let width = text_area.width as usize;
         let height = text_area.height as usize;
         if self.switched_text {
             let line_count = self.text.line_len();
@@ -269,12 +154,36 @@ impl Widget for EditorWidget<'_> {
             .skip(self.editor.view_offset)
             .take(height);
         for (y, l) in visible_lines.enumerate() {
-            buf.set_string(
-                text_area.x,
-                text_area.y + y as u16,
-                l.to_string(),
-                Style::new(),
-            );
+            let rope_slice = l.to_string();
+            let mut l = rope_slice.as_str();
+            let mut x_offset = 0;
+            let y = text_area.y + y as u16;
+            while x_offset < width {
+                let space_style = Style::new().fg(Color::DarkGray);
+                let x = (text_area.x as usize + x_offset) as u16;
+                let Some(first_char) = l.chars().next() else {
+                    break;
+                };
+                if first_char.is_whitespace() {
+                    if let Some(i) = l.find(|c: char| !c.is_whitespace()) {
+                        let (whitespace, rest) = l.split_at(i);
+                        l = rest;
+                        buf.set_string(x, y, whitespace.replace(" ", "·"), space_style);
+                        x_offset += whitespace.chars().count();
+                    } else {
+                        buf.set_string(x, y, l.replace(" ", "·"), space_style);
+                        break;
+                    }
+                } else if let Some(i) = l.find(|c: char| c.is_whitespace()) {
+                    let (chars, rest) = l.split_at(i);
+                    l = rest;
+                    buf.set_string(x, y, chars, Style::new());
+                    x_offset += chars.chars().count();
+                } else {
+                    buf.set_string(x, y, l, Style::new());
+                    break;
+                }
+            }
         }
 
         ScrollbarWidget {

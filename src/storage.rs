@@ -1,4 +1,6 @@
 pub mod editing;
+mod span_edit;
+mod text_edit;
 
 use std::{
     fmt::Display,
@@ -12,7 +14,10 @@ use crop::Rope;
 use eyre::{Context, OptionExt, Result, eyre};
 use serde::{Deserialize, Serialize};
 
-use crate::storage::parser::{Field, Value};
+use crate::storage::{
+    parser::{Field, Value},
+    text_edit::TextEditable,
+};
 
 pub type Date = NaiveDateTime;
 
@@ -178,7 +183,7 @@ pub struct Task {
     title: String,
     created: Date,
     boxes: Vec<BoxState>,
-    context: Rope,
+    context: TextEditable,
     completed: Option<Date>,
     source_path: Option<PathBuf>,
     dirty: bool,
@@ -196,7 +201,7 @@ impl Task {
             title,
             created,
             boxes,
-            context,
+            context: context.into(),
             completed,
             source_path: None,
             dirty: true,
@@ -214,7 +219,7 @@ impl Task {
         &self.boxes
     }
     pub fn context(&self) -> &Rope {
-        &self.context
+        &self.context.inner()
     }
     pub fn completed(&self) -> &Option<Date> {
         &self.completed
@@ -284,7 +289,7 @@ impl Task {
             created: created?,
             boxes: boxes?,
             completed: completed?,
-            context: context.into(),
+            context: Rope::from(context).into(),
             source_path: Some(path),
             dirty: false,
             extra_fields: remaining,
@@ -313,7 +318,7 @@ impl Display for Task {
             writeln!(f, "{}: {}", field.key, field.value)?;
         }
         writeln!(f, "---")?;
-        writeln!(f, "{}", self.context)?;
+        writeln!(f, "{}", self.context.inner())?;
         Ok(())
     }
 }
