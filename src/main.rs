@@ -94,8 +94,15 @@ fn main() {
         return;
     }
 
-    let (mut app, tui, config) = App::load();
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err((c, r)) => {
+            eprintln!("failed to load config, continuing with default\n{r:?}");
+            c
+        }
+    };
     setup_logger(&config).expect("setting up logger");
+    let (mut app, tui) = App::load(&config);
     let terminal = ratatui::init();
     app.run(terminal, tui);
     ratatui::restore();
@@ -144,14 +151,7 @@ pub enum PopupEnum<'a> {
 }
 
 impl App {
-    pub fn load<'a>() -> (Self, AppTui<'a>, Config) {
-        let config = match Config::load() {
-            Ok(c) => c,
-            Err((c, r)) => {
-                eprintln!("failed to load config, continuing with default\n{r:?}");
-                c
-            }
-        };
+    pub fn load<'a>(config: &Config) -> (Self, AppTui<'a>) {
         let mut tui = AppTui::new();
         let data = match Data::load(
             shellexpand::tilde(&config.data_path.to_string_lossy())
@@ -169,7 +169,7 @@ impl App {
         };
         let data = FilteredData::new(data);
         let app: App = App { data, exit: false };
-        (app, tui, config)
+        (app, tui)
     }
 
     fn run(&mut self, mut terminal: DefaultTerminal, tui: AppTui) {

@@ -65,9 +65,7 @@ impl Popup for SaveDialog {
 
     fn handle_key(&mut self, key_event: KeyEvent) -> SaveAction {
         match key_event.code {
-            KeyCode::Char('q') if key_event.modifiers.contains(KeyModifiers::SHIFT) => {
-                SaveAction::ExitNoWrite
-            }
+            KeyCode::Char('Q') => SaveAction::ExitNoWrite,
             KeyCode::Char('q') => SaveAction::Exit,
             KeyCode::Char(',') => SaveAction::Write,
             _ => SaveAction::Unhandled,

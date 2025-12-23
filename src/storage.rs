@@ -4,12 +4,12 @@ mod text_edit;
 
 use std::{
     fmt::Display,
-    fs::{OpenOptions, create_dir_all},
+    fs::{self, OpenOptions, create_dir_all},
     io::{Read, Write},
     path::PathBuf,
 };
 
-use chrono::{Datelike, NaiveDateTime};
+use chrono::{DateTime, Datelike, Local, NaiveDateTime};
 use crop::Rope;
 use eyre::{Context, OptionExt, Result, eyre};
 use serde::{Deserialize, Serialize};
@@ -85,7 +85,10 @@ impl Data {
             .read_to_string(&mut buf)?;
         buf = buf.trim().to_owned();
         buf += "\n";
-        Task::from_string(path, buf)
+        let metadata = fs::metadata(&path).wrap_err("reading metadata")?;
+        let created = metadata.created().context("reading created time")?;
+
+        Task::from_string(DateTime::<Local>::from(created).naive_local(), path, buf)
     }
 
     pub fn write_dirty(&mut self) -> Result<()> {
@@ -182,9 +185,9 @@ impl Data {
 pub struct Task {
     title: String,
     created: Date,
+    completed: Option<Date>,
     boxes: Vec<BoxState>,
     context: TextEditable,
-    completed: Option<Date>,
     source_path: Option<PathBuf>,
     dirty: bool,
     extra_fields: Vec<Field>,
@@ -225,7 +228,7 @@ impl Task {
         &self.completed
     }
 
-    fn from_string(path: PathBuf, buf: String) -> Result<Self> {
+    fn from_string(creation_date: Date, path: PathBuf, buf: String) -> Result<Self> {
         let title = path
             .file_stem()
             .ok_or_eyre("invalid name")?
@@ -243,7 +246,7 @@ impl Task {
             .ok_or_eyre("missing frontmatter end marker")?;
         let fields: Vec<Field> = parser::parse_fields(front_matter, line_offset)?;
         let mut created = Err(eyre!("missing created field"));
-        let mut boxes = Err(eyre!("missing boxes field"));
+        let mut boxes = Ok(None);
         let mut completed = Ok(None);
 
         let mut remaining = vec![];
@@ -259,11 +262,11 @@ impl Task {
                 }
                 ("boxes", v) => match v {
                     Value::BoxList(list) => {
-                        boxes = Ok(list);
+                        boxes = Ok(Some(list));
                     }
-                    Value::Unknown(s) if s.is_empty() => boxes = Ok(vec![]),
+                    Value::Unknown(s) if s.is_empty() => boxes = Ok(Some(vec![])),
                     _ => {
-                        created = Err(eyre!("boxes should be in list format"));
+                        boxes = Err(eyre!("boxes should be in list format"));
                     }
                 },
                 ("completed", v) => {
@@ -284,14 +287,40 @@ impl Task {
             }
         }
 
+        let mut dirty = false;
+
+        let created = match created {
+            Ok(v) => v,
+            Err(e) => {
+                dirty = true;
+                log::warn!(
+                    "using file metadata creation time for {} ({e})",
+                    path.to_string_lossy()
+                );
+                creation_date
+            }
+        };
+
+        let boxes = match boxes? {
+            Some(v) => v,
+            None => {
+                dirty = true;
+                log::warn!(
+                    "using empty box list for {} (missing boxes metadata)",
+                    path.to_string_lossy()
+                );
+                vec![]
+            }
+        };
+
         Ok(Self {
             title,
-            created: created?,
-            boxes: boxes?,
+            created,
+            boxes,
             completed: completed?,
             context: Rope::from(context).into(),
             source_path: Some(path),
-            dirty: false,
+            dirty,
             extra_fields: remaining,
         })
     }
