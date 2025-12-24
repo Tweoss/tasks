@@ -47,11 +47,12 @@ use crate::{
 
 // filter expression grammar:
 // filter = '(' delimited(filter, '|') ')' | '(' delimited(filter, '&') ')' | 'not' filter | existence | comparison
-// existence = 'completed' | 'ticked'[i]
+// existence = 'completed' | 'box'[i]
 // comparison = value operator reference
-// value = 'created' | 'completed' | 'ticked'[i]
+// value = 'created' | 'completed' | 'box'[i]
 // operator = '>=' | '<=' | '='
 // reference = date | 'today' | 'yesterday'
+// date = '"' \d{4}-\d{2}-\d{2} \d{2}:\d{2} '"'
 //
 // maybe in future also, 'name' 'contains' string
 //
@@ -124,9 +125,9 @@ impl Default for App {
 
 #[derive(Debug, Default, Clone)]
 pub enum FocusState<'a> {
-    // Filter,
     #[default]
     List,
+    Filter,
     Task(TaskFocus),
     Popup {
         popup: PopupEnum<'a>,
@@ -168,6 +169,9 @@ impl App {
             }
         };
         let data = FilteredData::new(data);
+        if !data.is_empty() {
+            tui.set_table_index(0);
+        }
         let app: App = App { data, exit: false };
         (app, tui)
     }

@@ -3,6 +3,7 @@ mod span_edit;
 mod text_edit;
 
 use std::{
+    collections::HashSet,
     fmt::Display,
     fs::{self, OpenOptions, create_dir_all},
     io::{Read, Write},
@@ -187,6 +188,7 @@ pub struct Task {
     created: Date,
     completed: Option<Date>,
     boxes: Vec<BoxState>,
+    tags: HashSet<String>,
     context: TextEditable,
     source_path: Option<PathBuf>,
     dirty: bool,
@@ -197,6 +199,7 @@ impl Task {
         title: String,
         created: Date,
         boxes: Vec<BoxState>,
+        tags: HashSet<String>,
         context: Rope,
         completed: Option<Date>,
     ) -> Self {
@@ -204,6 +207,7 @@ impl Task {
             title,
             created,
             boxes,
+            tags,
             context: context.into(),
             completed,
             source_path: None,
@@ -220,6 +224,9 @@ impl Task {
     }
     pub fn boxes(&self) -> &[BoxState] {
         &self.boxes
+    }
+    pub fn tags(&self) -> &HashSet<String> {
+        &self.tags
     }
     pub fn context(&self) -> &Rope {
         self.context.inner()
@@ -245,8 +252,9 @@ impl Task {
             .split_once("---\n")
             .ok_or_eyre("missing frontmatter end marker")?;
         let fields: Vec<Field> = parser::parse_fields(front_matter, line_offset)?;
-        let mut created = Err(eyre!("missing created field"));
+        let mut created = Ok(None);
         let mut boxes = Ok(None);
+        let mut tags = Ok(None);
         let mut completed = Ok(None);
 
         let mut remaining = vec![];
@@ -254,10 +262,13 @@ impl Task {
             match (field.key.as_str(), field.value) {
                 ("created", v) => {
                     // Last wins.
-                    if let Value::Date(date) = v {
-                        created = Ok(date);
-                    } else {
-                        created = Err(eyre!("created should be in date format"));
+                    match v {
+                        Value::Date(date) => {
+                            created = Ok(Some(date));
+                        }
+                        t => {
+                            created = Err(eyre!("created should be in date format, found {t}"));
+                        }
                     }
                 }
                 ("boxes", v) => match v {
@@ -265,8 +276,8 @@ impl Task {
                         boxes = Ok(Some(list));
                     }
                     Value::Unknown(s) if s.is_empty() => boxes = Ok(Some(vec![])),
-                    _ => {
-                        boxes = Err(eyre!("boxes should be in list format"));
+                    t => {
+                        boxes = Err(eyre!("boxes should be in list format, found {t}"));
                     }
                 },
                 ("completed", v) => {
@@ -277,9 +288,22 @@ impl Task {
                         Value::Unknown(s) if s.is_empty() => {
                             completed = Ok(None);
                         }
-                        _ => completed = Err(eyre!("completed should be in date format or empty")),
+                        t => {
+                            completed = Err(eyre!(
+                                "completed should be in date format or empty, found {t}"
+                            ))
+                        }
                     };
                 }
+                ("tags", v) => match v {
+                    Value::TagList(list) => {
+                        tags = Ok(Some(list.into_iter().collect()));
+                    }
+                    Value::Unknown(s) if s.is_empty() => tags = Ok(Some(HashSet::new())),
+                    t => {
+                        tags = Err(eyre!("tags should be in list format, found {t}"));
+                    }
+                },
                 (k, value) => remaining.push(Field {
                     key: k.into(),
                     value,
@@ -289,12 +313,12 @@ impl Task {
 
         let mut dirty = false;
 
-        let created = match created {
-            Ok(v) => v,
-            Err(e) => {
+        let created = match created? {
+            Some(v) => v,
+            None => {
                 dirty = true;
                 log::warn!(
-                    "using file metadata creation time for {} ({e})",
+                    "using file metadata creation time for {} (missing created metadata)",
                     path.to_string_lossy()
                 );
                 creation_date
@@ -313,11 +337,24 @@ impl Task {
             }
         };
 
+        let tags = match tags? {
+            Some(v) => v,
+            None => {
+                dirty = true;
+                log::warn!(
+                    "using empty tag list for {} (missing tags metadata)",
+                    path.to_string_lossy()
+                );
+                HashSet::new()
+            }
+        };
+
         Ok(Self {
             title,
             created,
             boxes,
             completed: completed?,
+            tags,
             context: Rope::from(context).into(),
             source_path: Some(path),
             dirty,
@@ -333,16 +370,22 @@ fn format_date(date: &Date) -> String {
 impl Display for Task {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "---")?;
-        writeln!(f, "created: {}", format_date(&self.created))?;
+        writeln!(f, "created: {}", Value::Date(self.created))?;
         writeln!(
             f,
             "completed: {}",
-            self.completed.as_ref().map(format_date).unwrap_or_default()
+            self.completed
+                .map(Value::Date)
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_default()
         )?;
-        writeln!(f, "boxes:")?;
-        for b in &self.boxes {
-            writeln!(f, "  - {}", b)?;
-        }
+        write!(f, "boxes:{}", Value::BoxList(self.boxes.clone()))?;
+        write!(
+            f,
+            "tags:{}",
+            Value::TagList(self.tags.iter().cloned().collect())
+        )?;
         for field in &self.extra_fields {
             writeln!(f, "{}: {}", field.key, field.value)?;
         }
@@ -362,7 +405,7 @@ mod parser {
     };
     use eyre::eyre;
 
-    use crate::storage::{BoxState, Date};
+    use crate::storage::{BoxState, Date, format_date};
 
     #[derive(Debug, Clone)]
     pub struct Field {
@@ -375,6 +418,7 @@ mod parser {
         Unknown(String),
         Date(Date),
         BoxList(Vec<BoxState>),
+        TagList(Vec<String>),
     }
 
     impl Display for Value {
@@ -382,12 +426,19 @@ mod parser {
             match self {
                 Value::Unknown(s) => f.write_str(s),
                 Value::Date(naive_date_time) => {
-                    write!(f, "{}", naive_date_time.format("%Y-%m-%dT%H:%M:%S"))
+                    write!(f, "{}", format_date(naive_date_time))
                 }
                 Value::BoxList(box_states) => {
                     writeln!(f)?;
                     for b in box_states {
                         writeln!(f, "  - {}", b)?;
+                    }
+                    Ok(())
+                }
+                Value::TagList(items) => {
+                    writeln!(f)?;
+                    for t in items {
+                        writeln!(f, "  - {}", t)?;
                     }
                     Ok(())
                 }
@@ -462,12 +513,21 @@ mod parser {
                     .collect::<Vec<_>>(),
             )
             .map(Value::BoxList);
+        let tag_list = newline()
+            .ignore_then(
+                just("  - ")
+                    .ignore_then(line)
+                    .repeated()
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .map(Value::TagList);
         let text = line.map(Value::Unknown);
 
         ident()
             .then_ignore(just(":"))
             .then_ignore(inline_whitespace())
-            .then(choice((date_line, box_list, text)))
+            .then(choice((date_line, box_list, tag_list, text)))
             .map(|(key, value): (&str, _)| Field {
                 key: key.to_string(),
                 value,

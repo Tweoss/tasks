@@ -2,7 +2,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Widget};
 
-use crate::filter::FilteredData;
+use crate::filter::{FilteredData, TaskID};
 use crate::storage::{BoxState, Task};
 use crate::tui::task::editor::{EditorFocus, EditorTui, EditorWidget};
 
@@ -11,7 +11,7 @@ mod scrollbar;
 
 pub struct TaskTui {
     editor: EditorTui,
-    last_index: Option<usize>,
+    last_id: Option<TaskID>,
 }
 
 pub enum Action {
@@ -22,7 +22,7 @@ pub enum Action {
 impl TaskTui {
     pub fn new() -> Self {
         Self {
-            last_index: None,
+            last_id: None,
             editor: EditorTui::new(),
         }
     }
@@ -90,7 +90,7 @@ impl TaskFocus {
 pub struct TaskWidget<'a, 'b> {
     pub task: &'a mut TaskTui,
     pub data: &'b FilteredData,
-    pub index: Option<usize>,
+    pub id: Option<TaskID>,
     pub focus: Option<TaskFocus>,
     pub cursor_buf_pos: &'a mut Option<(u16, u16)>,
 }
@@ -100,21 +100,23 @@ impl Widget for TaskWidget<'_, '_> {
         let TaskWidget {
             task,
             data,
-            index,
+            id,
             focus,
             cursor_buf_pos,
         } = self;
 
-        let Some(index) = index else {
+        let Some(id) = id else {
             return;
         };
-        let Some(v) = data.get(index) else {
+        let Some(v) = data.get(id) else {
             return;
         };
 
-        let constraints = [Constraint::Max(3), Constraint::Fill(1), Constraint::Fill(2)];
+        let constraints = [Constraint::Max(3), Constraint::Fill(1), Constraint::Fill(1)];
         let layout = Layout::new(Direction::Vertical, constraints);
-        let [title_area, context_area, boxes_area] = layout.areas(area);
+        let [title_area, context_area, data_area] = layout.areas(area);
+        let layout = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]);
+        let [boxes_area, tags_area] = layout.areas(data_area);
 
         let title_block = Block::bordered().title("Title");
         Text::raw(v.title()).render(title_block.inner(title_area), buf);
@@ -127,8 +129,8 @@ impl Widget for TaskWidget<'_, '_> {
                 _ => Color::Reset,
             }));
 
-        let switched_text = task.last_index != Some(index);
-        task.last_index = Some(index);
+        let switched_text = task.last_id != Some(id);
+        task.last_id = Some(id);
         EditorWidget {
             editor: &mut task.editor,
             text: v.context(),
@@ -160,5 +162,20 @@ impl Widget for TaskWidget<'_, '_> {
         )
         .render(boxes_block.inner(boxes_area), buf);
         boxes_block.render(boxes_area, buf);
+
+        let tags_block = Block::bordered()
+            .title("Tags")
+            .border_style(Style::new().fg(match focus {
+                Some(TaskFocus::Boxes) => Color::Blue,
+                _ => Color::Reset,
+            }));
+        Text::raw(
+            v.tags()
+                .iter()
+                .map(|t| t.to_string() + "\n")
+                .collect::<String>(),
+        )
+        .render(tags_block.inner(tags_area), buf);
+        tags_block.render(tags_area, buf);
     }
 }

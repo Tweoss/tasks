@@ -6,7 +6,7 @@ use std::{
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Layout},
-    widgets::Widget,
+    widgets::{Block, Widget},
 };
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
     filter::FilteredData,
     popup::{ErrorDialog, SaveDialog},
     tui::{
+        filter::{FilterTui, FilterWidget},
         popup::{self, PopupTui, PopupWidget},
         table::{TableTui, TableWidget},
         task::{TaskFocus, TaskTui, TaskWidget},
@@ -22,6 +23,7 @@ use crate::{
 
 pub struct AppTui<'a> {
     focus: FocusState<'a>,
+    filter: FilterTui<'a>,
     table: TableTui,
     task: TaskTui,
     popup: PopupTui,
@@ -35,11 +37,16 @@ pub enum Action {
 impl AppTui<'_> {
     pub fn new() -> Self {
         Self {
+            filter: FilterTui::new(),
             focus: FocusState::List,
             table: TableTui::new(),
             task: TaskTui::new(),
             popup: PopupTui::new(),
         }
+    }
+
+    pub fn set_table_index(&mut self, index: usize) {
+        self.table.set_selected(index);
     }
 
     pub fn set_error_focus(&mut self, error: eyre::Report) {
@@ -75,11 +82,21 @@ impl AppTui<'_> {
                             last_focus: self.focus.clone().into(),
                         }
                     }
+                    KeyCode::Char('f') => self.focus = FocusState::Filter,
                     KeyCode::Enter => self.focus = FocusState::Task(TaskFocus::context_locked()),
                     KeyCode::Right => self.focus = FocusState::Task(TaskFocus::context_unlocked()),
                     _ => (),
                 },
             },
+            FocusState::Filter => match self.filter.handle_key(key_event)? {
+                super::filter::Action::Exit => self.focus = FocusState::List,
+                super::filter::Action::Updated(f) => {
+                    if let Err(e) = data.set_filter(&f) {
+                        log::error!("encountered err {e} while updating filter");
+                    }
+                }
+            },
+
             FocusState::Task(task_focus) => {
                 match self.task.handle_key_event(
                     key_event,
@@ -131,33 +148,47 @@ impl Widget for AppWidget<'_, '_> {
             data,
             cursor_buf_pos,
         } = self;
-        // In future, can match on focus to change layout.
+
+        let split = Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).split(area);
+        let [filter_area, area] = [split[0], split[1]];
+
+        let app = app.clone();
+        let filter_block = Block::bordered().title("Filter");
+        let is_focused = matches!(app.borrow().focus, FocusState::Filter);
+        FilterWidget {
+            filter: &mut app.borrow_mut().filter,
+            is_focused,
+        }
+        .render(filter_block.inner(filter_area), buf);
+        filter_block.render(filter_area, buf);
+
         let task_split = Layout::horizontal(Constraint::from_fills([1, 1])).split(area);
+
         {
             let app = app.clone();
             let (mut table, focus) =
                 RefMut::map_split(app.borrow_mut(), |a| (&mut a.table, &mut a.focus));
             TableWidget(&mut table, &focus, data).render(task_split[0], buf);
         }
+
         let mut app = app.borrow_mut();
         let selected = app.table.selected();
         let focus_state = app.focus.clone();
         TaskWidget {
             task: &mut app.task,
             data,
-            index: selected,
+            id: selected.map(|i| data.get_id(i)),
             focus: focus_state.as_task(),
             cursor_buf_pos,
         }
         .render(task_split[1], buf);
 
-        match app.focus.clone() {
-            FocusState::List => {}
-            FocusState::Task(_) => {}
-            FocusState::Popup {
-                popup: p,
-                last_focus: _,
-            } => PopupWidget(&p).render(area, buf),
+        if let FocusState::Popup {
+            popup: p,
+            last_focus: _,
+        } = app.focus.clone()
+        {
+            PopupWidget(&p).render(area, buf)
         }
     }
 }

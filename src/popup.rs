@@ -1,7 +1,9 @@
+use std::collections::HashSet;
+
 use chrono::Local;
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+    crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Flex, Layout, Rect},
     text::Text,
     widgets::{Block, Clear, Widget},
@@ -107,6 +109,7 @@ impl Popup for AddDialog<'_> {
                     title.trim().to_string(),
                     Local::now().naive_local(),
                     vec![],
+                    HashSet::new(),
                     String::new().into(),
                     None,
                 ))
@@ -133,7 +136,7 @@ pub struct ErrorDialog {
 pub enum ErrorAction {
     Okay,
 }
-impl<'a> Popup for ErrorDialog {
+impl Popup for ErrorDialog {
     const TITLE: &'static str = "Error Popup";
     type Action = ErrorAction;
 

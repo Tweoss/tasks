@@ -115,6 +115,9 @@ impl TableTui {
     pub fn selected(&self) -> Option<usize> {
         self.table_state.selected()
     }
+    pub fn set_selected(&mut self, index: usize) {
+        *self.table_state.selected_mut() = Some(index);
+    }
 }
 
 pub struct TableWidget<'a, 'b>(
