@@ -1,13 +1,21 @@
+use crate::{
+    storage::{keyboard_edit::KeyboardEditable, text_edit::TextOp},
+    tui::{
+        FOCUSED_BORDER, UNFOCUSED_BORDER,
+        task::editor::{EditorFocus, EditorTui, EditorWidget},
+    },
+};
+use chumsky::text::Char;
+use crop::Rope;
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
     style::Style,
-    widgets::Widget,
+    widgets::{Block, Widget},
 };
-use tui_textarea::TextArea;
 
-pub struct FilterTui<'a> {
-    textbox: TextArea<'a>,
-    reset_cursor_style: Style,
+pub struct FilterTui {
+    editor: EditorTui,
+    textbox: KeyboardEditable,
 }
 
 pub enum Action {
@@ -15,44 +23,66 @@ pub enum Action {
     Updated(String),
 }
 
-impl FilterTui<'_> {
+impl FilterTui {
     pub fn new() -> Self {
-        let textbox = TextArea::new(vec![]);
         Self {
-            reset_cursor_style: textbox.cursor_style(),
-            textbox,
+            editor: EditorTui::new(),
+            textbox: KeyboardEditable::from_rope(Rope::new(), true),
         }
     }
     pub fn handle_key(&mut self, key_event: KeyEvent) -> Option<Action> {
         match key_event.code {
-            KeyCode::Enter => Some(Action::Updated(
-                self.textbox.lines().first().cloned().unwrap_or_default(),
-            )),
+            KeyCode::Enter => Some(Action::Updated(self.textbox.inner().to_string())),
             KeyCode::Esc => Some(Action::Exit),
             _ => {
-                self.textbox.input(key_event);
+                let text_op = KeyboardEditable::map_key_event(key_event)?;
+                match text_op {
+                    TextOp::Move(_) => {
+                        self.textbox.apply_text_op(text_op);
+                    }
+                    TextOp::InsertText(ref cow) => {
+                        if !cow.contains(|c: char| c.is_newline()) {
+                            self.textbox.apply_text_op(text_op);
+                        }
+                    }
+                    TextOp::Delete { .. } => {
+                        self.textbox.apply_text_op(text_op);
+                    }
+                }
                 None
             }
         }
     }
 }
 
-pub struct FilterWidget<'a, 'b> {
-    pub filter: &'a mut FilterTui<'b>,
+pub struct FilterWidget<'a> {
+    pub filter: &'a mut FilterTui,
     pub is_focused: bool,
+    pub cursor_buf_pos: &'a mut Option<(u16, u16)>,
 }
 
-impl Widget for FilterWidget<'_, '_> {
+impl Widget for FilterWidget<'_> {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        if self.is_focused {
-            self.filter
-                .textbox
-                .set_cursor_style(self.filter.reset_cursor_style);
+        let mut filter_block = Block::bordered().title("Filter");
+        filter_block = filter_block.border_style(Style::new().fg(if self.is_focused {
+            FOCUSED_BORDER
         } else {
-            self.filter
-                .textbox
-                .set_cursor_style(self.filter.textbox.cursor_line_style());
+            UNFOCUSED_BORDER
+        }));
+        let outer_area = area;
+        let area = filter_block.inner(area);
+        filter_block.render(outer_area, buf);
+
+        EditorWidget {
+            editor: &mut self.filter.editor,
+            text: &mut self.filter.textbox,
+            cursor_buf_pos: self.cursor_buf_pos,
+            focus: if self.is_focused {
+                Some(EditorFocus::Locked)
+            } else {
+                None
+            },
         }
-        self.filter.textbox.render(area, buf);
+        .render(area, buf);
     }
 }

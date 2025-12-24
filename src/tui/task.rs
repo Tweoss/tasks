@@ -5,8 +5,9 @@ use ratatui::widgets::{Block, Widget};
 use crate::filter::{FilteredData, TaskID};
 use crate::storage::{BoxState, Task};
 use crate::tui::task::editor::{EditorFocus, EditorTui, EditorWidget};
+use crate::tui::{FOCUSED_BORDER, UNFOCUSED_BORDER};
 
-mod editor;
+pub mod editor;
 mod scrollbar;
 
 pub struct TaskTui {
@@ -116,15 +117,17 @@ impl Widget for TaskWidget<'_, '_> {
         let layout = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]);
         let [boxes_area, tags_area] = layout.areas(data_area);
 
-        let title_block = Block::bordered().title("Title");
+        let title_block = Block::bordered()
+            .title("Title")
+            .border_style(UNFOCUSED_BORDER);
         Text::raw(v.title()).render(title_block.inner(title_area), buf);
         title_block.render(title_area, buf);
 
         let context_block =
             (Block::bordered().title("Context")).border_style(Style::new().fg(match focus {
-                Some(TaskFocus::Context(EditorFocus::Unlocked)) => Color::Blue,
+                Some(TaskFocus::Context(EditorFocus::Unlocked)) => FOCUSED_BORDER,
                 Some(TaskFocus::Context(EditorFocus::Locked)) => Color::Green,
-                _ => Color::Reset,
+                _ => UNFOCUSED_BORDER,
             }));
 
         EditorWidget {
@@ -139,8 +142,8 @@ impl Widget for TaskWidget<'_, '_> {
         let boxes_block = Block::bordered()
             .title("Boxes")
             .border_style(Style::new().fg(match focus {
-                Some(TaskFocus::Boxes) => Color::Blue,
-                _ => Color::Reset,
+                Some(TaskFocus::Boxes) => FOCUSED_BORDER,
+                _ => UNFOCUSED_BORDER,
             }));
         Text::raw(
             v.boxes()
@@ -161,8 +164,8 @@ impl Widget for TaskWidget<'_, '_> {
         let tags_block = Block::bordered()
             .title("Tags")
             .border_style(Style::new().fg(match focus {
-                Some(TaskFocus::Boxes) => Color::Blue,
-                _ => Color::Reset,
+                Some(TaskFocus::Boxes) => FOCUSED_BORDER,
+                _ => UNFOCUSED_BORDER,
             }));
         Text::raw(
             v.tags()

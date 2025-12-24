@@ -25,7 +25,7 @@ use crate::{
 
 pub struct AppTui<'a> {
     focus: FocusState<'a>,
-    filter: FilterTui<'a>,
+    filter: FilterTui,
     table: TableTui,
     task: TaskTui,
     popup: PopupTui,
@@ -157,14 +157,13 @@ impl Widget for AppWidget<'_, '_> {
         let [filter_area, area] = [split[0], split[1]];
 
         let app = app.clone();
-        let filter_block = Block::bordered().title("Filter");
         let is_focused = matches!(app.borrow().focus, FocusState::Filter);
         FilterWidget {
             filter: &mut app.borrow_mut().filter,
             is_focused,
+            cursor_buf_pos,
         }
-        .render(filter_block.inner(filter_area), buf);
-        filter_block.render(filter_area, buf);
+        .render(filter_area, buf);
 
         let task_split = Layout::horizontal(Constraint::from_fills([1, 1])).split(area);
 

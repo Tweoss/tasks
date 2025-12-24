@@ -22,12 +22,17 @@ impl Widget for ScrollbarWidget {
             view_offset,
             total_lines,
         } = self;
-        // total_lines should be > 0, so this should be nonnegative.
         let scrollable_line_count = height + total_lines - 1;
         let visible_lines = height;
 
-        let offset = view_offset as f32 / scrollable_line_count as f32;
-        let fraction = visible_lines as f32 / scrollable_line_count as f32;
+        let (offset, fraction) = if scrollable_line_count == 0 {
+            (0.0, 1.0)
+        } else {
+            (
+                view_offset as f32 / scrollable_line_count as f32,
+                visible_lines as f32 / scrollable_line_count as f32,
+            )
+        };
 
         let offset = (offset * height as f32).ceil() as i32;
         let fraction = ((fraction * height as f32) as u16).max(1);

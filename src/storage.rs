@@ -1,7 +1,7 @@
 pub mod editing;
 pub mod keyboard_edit;
 mod span_edit;
-mod text_edit;
+pub mod text_edit;
 
 use std::{
     collections::HashSet,

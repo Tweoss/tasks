@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Cell, HighlightSpacing, Row, Table, TableState, Wi
 use crate::FocusState;
 use crate::filter::FilteredData;
 use crate::storage::BoxState;
+use crate::tui::{FOCUSED_BACKGROUND, FOCUSED_BORDER, UNFOCUSED_BORDER};
 
 const CHECK: &str = " ✔";
 const STARTED: &str = "🌟";
@@ -164,15 +165,21 @@ impl Widget for TableWidget<'_, '_> {
                     .style(Style::new().bg(Color::Reset))
             })
             .collect::<Vec<_>>();
-        let selected_row_style = Style::default().fg(Color::White);
-        let selected_row_style = match focus {
-            FocusState::List => selected_row_style.bg(Color::Blue),
-            _ => selected_row_style.bg(Color::DarkGray),
+        let style = if matches!(focus, FocusState::List) {
+            FOCUSED_BORDER
+        } else {
+            UNFOCUSED_BORDER
         };
+        let bg_style = if matches!(focus, FocusState::List) {
+            FOCUSED_BACKGROUND
+        } else {
+            UNFOCUSED_BORDER
+        };
+        let selected_row_style = Style::default().fg(Color::White).bg(bg_style);
         let t = Table::new(rows, list_split.iter())
             .row_highlight_style(selected_row_style)
             .highlight_spacing(HighlightSpacing::Always)
-            .block(Block::bordered().gray())
+            .block(Block::bordered().border_style(Style::new().fg(style)))
             .header(
                 Row::new(vec!["Task".bold(), "Completed At".bold(), "Time".bold()])
                     .bottom_margin(1),
