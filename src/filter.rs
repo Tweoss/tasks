@@ -113,6 +113,21 @@ impl<'a> ExactSizeIterator for Iter<'a> {
 }
 
 impl Task {
+    fn get_box(&self, index: isize) -> Option<BoxState> {
+        if index >= 0 {
+            self.boxes().get(index as usize).copied()
+        } else {
+            // -1 should be last
+            // -len should be 0th
+            let offset = (-index) as usize;
+            if offset <= self.boxes().len() {
+                self.boxes().get(self.boxes().len() - offset).copied()
+            } else {
+                None
+            }
+        }
+    }
+
     fn satisfies(&self, expr: &BooleanExpr) -> bool {
         match expr {
             BooleanExpr::Not(boolean_expr) => !self.satisfies(boolean_expr),
@@ -138,16 +153,16 @@ impl Task {
                 }
             }
             BooleanExpr::Tag(t) => self.tags().contains(t),
-            BooleanExpr::Box { index } => self.boxes().get(*index).is_some(),
+            BooleanExpr::Box { index } => self.get_box(*index).is_some(),
             BooleanExpr::Completed => self.completed().is_some(),
         }
     }
     fn eval(&self, expr: &DateExpr) -> Option<NaiveDateTime> {
         match expr {
             DateExpr::Date(naive_date) => Some(*naive_date),
-            DateExpr::Box { index } => self.boxes().get(*index).and_then(|b| {
+            DateExpr::Box { index } => self.get_box(*index).and_then(|b| {
                 if let BoxState::Checked(naive_date_time) = b {
-                    Some(*naive_date_time)
+                    Some(naive_date_time)
                 } else {
                     None
                 }
@@ -172,7 +187,7 @@ pub enum BooleanExpr {
     },
     Tag(String),
     Box {
-        index: usize,
+        index: isize,
     },
     Completed,
 }
@@ -180,7 +195,7 @@ pub enum BooleanExpr {
 #[derive(Clone, Debug)]
 pub enum DateExpr {
     Date(NaiveDateTime),
-    Box { index: usize },
+    Box { index: isize },
     Completed,
     Created,
 }
@@ -247,20 +262,28 @@ mod parser {
         fn parse_int<'src>(
             n: &'src str,
             span: SimpleSpan,
+        ) -> std::result::Result<isize, Rich<'src, char>> {
+            n.parse::<isize>().map_err(|e| Rich::custom(span, e))
+        }
+        fn parse_uint<'src>(
+            n: &'src str,
+            span: SimpleSpan,
         ) -> std::result::Result<usize, Rich<'src, char>> {
             n.parse::<usize>().map_err(|e| Rich::custom(span, e))
         }
         fn digit_count<'src>(
             count: usize,
         ) -> impl Parser<'src, &'src str, usize, extra::Err<Rich<'src, char>>> + Clone {
-            digits(10).exactly(count).to_slice().try_map(parse_int)
+            digits(10).exactly(count).to_slice().try_map(parse_uint)
         }
         let date_expr = choice((
             just("completed").to(DateExpr::Completed),
             just("created").to(DateExpr::Created),
             just("box[").ignore_then(
-                digits(10)
-                    .repeated()
+                just("-")
+                    .to(())
+                    .or(empty())
+                    .then(digits(10).repeated())
                     .to_slice()
                     .try_map(parse_int)
                     .then_ignore(just("]"))
@@ -329,8 +352,10 @@ mod parser {
                     .then_ignore(just(")"))
                     .map(BooleanExpr::Tag),
                 just("box[").ignore_then(
-                    digits(10)
-                        .repeated()
+                    just("-")
+                        .to(())
+                        .or(empty())
+                        .then(digits(10).repeated())
                         .to_slice()
                         .try_map(parse_int)
                         .then_ignore(just("]"))
