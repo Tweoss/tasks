@@ -6,7 +6,7 @@ use std::{
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Layout},
-    widgets::{Block, Widget},
+    widgets::Widget,
 };
 
 use crate::{

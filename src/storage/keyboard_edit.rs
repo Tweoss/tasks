@@ -94,6 +94,8 @@ impl KeyboardEditable {
                 unit: Unit::Char,
                 dir: LeftRight::Right,
             },
+            KeyCode::Char('z') if ctrl => TextOp::Undo,
+            KeyCode::Char('r') if ctrl => TextOp::Redo,
             KeyCode::Char(c) => TextOp::InsertText(c.to_string().into()),
             _ => return None,
         };

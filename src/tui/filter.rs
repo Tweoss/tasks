@@ -37,15 +37,12 @@ impl FilterTui {
             _ => {
                 let text_op = KeyboardEditable::map_key_event(key_event)?;
                 match text_op {
-                    TextOp::Move(_) => {
-                        self.textbox.apply_text_op(text_op);
-                    }
                     TextOp::InsertText(ref cow) => {
                         if !cow.contains(|c: char| c.is_newline()) {
                             self.textbox.apply_text_op(text_op);
                         }
                     }
-                    TextOp::Delete { .. } => {
+                    _ => {
                         self.textbox.apply_text_op(text_op);
                     }
                 }

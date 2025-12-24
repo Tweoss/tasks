@@ -8,6 +8,13 @@ use crate::storage::editing::Pos;
 #[derive(Debug, Clone)]
 pub struct SpanEditable(Rope);
 
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub edit: EditOp,
+    pub undo: EditOp,
+}
+
+#[derive(Debug, Clone)]
 pub enum EditOp {
     Insert { pos: Pos, text: String },
     Delete { start: Pos, end: Pos },
@@ -32,20 +39,23 @@ impl SpanEditable {
     pub fn inner(&self) -> &Rope {
         &self.0
     }
-    pub fn apply_edit(&mut self, op: EditOp) -> Result<(), EditErr> {
-        match op {
+    pub fn apply_edit(&mut self, op: EditOp) -> Result<LogEntry, EditErr> {
+        match op.clone() {
             EditOp::Insert { pos, text } => {
                 let byte_offset = self.get_byte(pos)?;
-                self.0.insert(byte_offset, text)
+                self.0.insert(byte_offset, text);
+                // Derive after the insertion (otherwise out of bounds).
+                self.derive_log(&op)
             }
             EditOp::Delete { start, end } => {
                 let start = self.get_byte(start)?;
                 let end = self.get_byte(end)?;
-                self.0.delete(start..end)
+                // Derive before deletion (otherwise out of bounds).
+                let log = self.derive_log(&op);
+                self.0.delete(start..end);
+                log
             }
-        };
-
-        Ok(())
+        }
     }
 
     pub fn get_line_char_len(&self, line: usize) -> Result<usize, EditErr> {
@@ -138,6 +148,29 @@ impl SpanEditable {
             (line, char_offset).into()
         };
         Ok(out)
+    }
+
+    fn derive_log(&self, op: &EditOp) -> Result<LogEntry, EditErr> {
+        let entry = match op {
+            EditOp::Insert { pos, text } => LogEntry {
+                edit: op.clone(),
+                undo: EditOp::Delete {
+                    start: *pos,
+                    end: self.pos_from_byte(self.get_byte(*pos)? + text.len())?,
+                },
+            },
+            EditOp::Delete { start, end } => LogEntry {
+                edit: op.clone(),
+                undo: EditOp::Insert {
+                    pos: *start,
+                    text: self
+                        .0
+                        .byte_slice(self.get_byte(*start)?..self.get_byte(*end)?)
+                        .to_string(),
+                },
+            },
+        };
+        Ok(entry)
     }
 }
 

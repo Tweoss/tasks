@@ -5,7 +5,7 @@ use crop::Rope;
 
 use crate::storage::{
     editing::{EditResult, Pos},
-    span_edit::{EditErr, EditOp, SpanEditable},
+    span_edit::{EditErr, EditOp, LogEntry, SpanEditable},
 };
 
 macro_rules! unwrap {
@@ -32,17 +32,20 @@ macro_rules! unwrap {
 }
 
 #[derive(Debug, Clone)]
-pub struct TextEditable(SpanEditable);
+pub struct TextEditable {
+    inner: SpanEditable,
+    log: Log,
+}
 
 impl TextEditable {
     pub fn inner(&self) -> &Rope {
-        self.0.inner()
+        self.inner.inner()
     }
 
     pub fn handle_edit_event(&mut self, mut cursor: Pos, op: TextOp) -> (EditResult, Option<Pos>) {
         match op {
             TextOp::Move(move_dir) => {
-                let text = &mut self.0;
+                let text = &mut self.inner;
                 match move_dir {
                     MoveDir::Up => {
                         if cursor.line > 0 {
@@ -65,7 +68,7 @@ impl TextEditable {
                             self.saturating_offset(cursor, unit, dir),
                             op,
                             cursor,
-                            self.0
+                            self.inner
                         );
                     }
                 }
@@ -73,16 +76,64 @@ impl TextEditable {
                 (EditResult::Noop, Some(cursor))
             }
             TextOp::InsertText(ref t) => {
-                let text = &mut self.0;
-                unwrap!(
-                    text.apply_edit(EditOp::Insert {
-                        pos: cursor,
-                        text: t.clone().to_string()
-                    }),
+                let text = &mut self.inner;
+                let edit_op = EditOp::Insert {
+                    pos: cursor,
+                    text: t.clone().to_string(),
+                };
+                let new_pos = Self::calc_cursor_pos(&edit_op);
+                let entry = unwrap!(text.apply_edit(edit_op), op, cursor, text);
+                self.log.push_entry(entry);
+
+                (EditResult::Dirty, Some(new_pos))
+            }
+            TextOp::Delete { unit, dir } => {
+                let other = unwrap!(
+                    self.saturating_offset(cursor, unit, dir),
                     op,
                     cursor,
-                    text
+                    self.inner
                 );
+                let (start, end) = match dir {
+                    LeftRight::Left => (other, cursor),
+                    LeftRight::Right => (cursor, other),
+                };
+                let text = &mut self.inner;
+                let edit_op = EditOp::Delete { start, end };
+                let new_pos = Self::calc_cursor_pos(&edit_op);
+                let entry = unwrap!(text.apply_edit(edit_op), op, cursor, text);
+                self.log.push_entry(entry);
+                (EditResult::Dirty, Some(new_pos))
+            }
+            TextOp::Redo => {
+                if let Some(edit_op) = self.log.redo() {
+                    let new_pos = Self::calc_cursor_pos(&edit_op);
+                    unwrap!(self.inner.apply_edit(edit_op), op, cursor, self.inner);
+                    (EditResult::Dirty, Some(new_pos))
+                } else {
+                    (EditResult::Noop, None)
+                }
+            }
+            TextOp::Undo => {
+                if let Some(edit_op) = self.log.undo() {
+                    let new_pos = Self::calc_cursor_pos(&edit_op);
+                    unwrap!(self.inner.apply_edit(edit_op), op, cursor, self.inner);
+                    (EditResult::Dirty, Some(new_pos))
+                } else {
+                    (EditResult::Noop, None)
+                }
+            }
+        }
+    }
+
+    // Calculate the position of cursor after an edit.
+    fn calc_cursor_pos(op: &EditOp) -> Pos {
+        match op {
+            EditOp::Insert {
+                pos: cursor,
+                text: t,
+            } => {
+                let mut cursor = *cursor;
                 let new_lines = t.chars().filter(|c| c.is_newline()).count();
                 let new_column = if new_lines == 0 {
                     cursor.column + t.chars().count()
@@ -91,34 +142,9 @@ impl TextEditable {
                 };
                 cursor.line += new_lines;
                 cursor.column = new_column;
-                (EditResult::Dirty, Some(cursor))
+                cursor
             }
-            TextOp::Delete { unit, dir } => {
-                let other = unwrap!(
-                    self.saturating_offset(cursor, unit, dir),
-                    op,
-                    cursor,
-                    self.0
-                );
-                let (start, end) = match dir {
-                    LeftRight::Left => (other, cursor),
-                    LeftRight::Right => (cursor, other),
-                };
-                let text = &mut self.0;
-                unwrap!(
-                    text.apply_edit(EditOp::Delete { start, end }),
-                    op,
-                    cursor,
-                    text
-                );
-                (
-                    EditResult::Dirty,
-                    Some(match dir {
-                        LeftRight::Left => other,
-                        LeftRight::Right => cursor,
-                    }),
-                )
-            }
+            EditOp::Delete { start, end: _ } => *start,
         }
     }
 
@@ -131,7 +157,7 @@ impl TextEditable {
     }
 
     fn saturating_char_offset(&self, cursor: Pos, dir: LeftRight) -> Result<Pos, EditErr> {
-        let text = &self.0;
+        let text = &self.inner;
         let byte = text.get_byte(cursor)?;
         match dir {
             LeftRight::Left => {
@@ -209,13 +235,15 @@ impl TextEditable {
             }
             count
         }
-        let byte = self.0.get_byte(cursor)?;
+        let byte = self.inner.get_byte(cursor)?;
         match dir {
-            LeftRight::Left => self.0.pos_from_byte(
-                byte - count_bytes_till_boundary(self.0.inner().byte_slice(..byte).chars().rev()),
+            LeftRight::Left => self.inner.pos_from_byte(
+                byte - count_bytes_till_boundary(
+                    self.inner.inner().byte_slice(..byte).chars().rev(),
+                ),
             ),
-            LeftRight::Right => self.0.pos_from_byte(
-                byte + count_bytes_till_boundary(self.0.inner().byte_slice(byte..).chars()),
+            LeftRight::Right => self.inner.pos_from_byte(
+                byte + count_bytes_till_boundary(self.inner.inner().byte_slice(byte..).chars()),
             ),
         }
     }
@@ -230,13 +258,15 @@ impl TextEditable {
                 .map(|c| c.len_utf8())
                 .sum()
         }
-        let byte = self.0.get_byte(cursor)?;
+        let byte = self.inner.get_byte(cursor)?;
         match dir {
-            LeftRight::Left => self.0.pos_from_byte(
-                byte - count_bytes_till_boundary(self.0.inner().byte_slice(..byte).chars().rev()),
+            LeftRight::Left => self.inner.pos_from_byte(
+                byte - count_bytes_till_boundary(
+                    self.inner.inner().byte_slice(..byte).chars().rev(),
+                ),
             ),
-            LeftRight::Right => self.0.pos_from_byte(
-                byte + count_bytes_till_boundary(self.0.inner().byte_slice(byte..).chars()),
+            LeftRight::Right => self.inner.pos_from_byte(
+                byte + count_bytes_till_boundary(self.inner.inner().byte_slice(byte..).chars()),
             ),
         }
     }
@@ -244,7 +274,13 @@ impl TextEditable {
 
 impl From<Rope> for TextEditable {
     fn from(value: Rope) -> Self {
-        Self(value.into())
+        Self {
+            inner: value.into(),
+            log: Log {
+                entries: vec![],
+                next_index: 0,
+            },
+        }
     }
 }
 
@@ -253,6 +289,8 @@ pub enum TextOp {
     Move(MoveDir),
     InsertText(Cow<'static, str>),
     Delete { unit: Unit, dir: LeftRight },
+    Redo,
+    Undo,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -273,4 +311,35 @@ pub enum Unit {
 pub enum LeftRight {
     Left,
     Right,
+}
+
+#[derive(Debug, Clone)]
+struct Log {
+    entries: Vec<LogEntry>,
+    next_index: usize,
+}
+
+impl Log {
+    fn push_entry(&mut self, entry: LogEntry) {
+        // If we undid some stuff and are now making new edits,
+        // then we are branching into a new "timeline". So,
+        // delete the old redo information.
+        self.entries.truncate(self.next_index);
+        self.entries.push(entry);
+        self.next_index += 1;
+    }
+    fn undo(&mut self) -> Option<EditOp> {
+        if self.next_index == 0 {
+            return None;
+        }
+        self.next_index -= 1;
+        Some(self.entries[self.next_index].undo.clone())
+    }
+    fn redo(&mut self) -> Option<EditOp> {
+        let out = self.entries.get(self.next_index);
+        if out.is_some() {
+            self.next_index += 1;
+        }
+        out.cloned().map(|e| e.edit)
+    }
 }
