@@ -201,6 +201,18 @@ pub enum Comp {
 }
 
 mod parser {
+    // filter expression grammar:
+    // filter = '(' delimited(filter, '|') ')' | '(' delimited(filter, '&') ')' | 'not' filter | existence | comparison
+    // existence = 'completed' | 'box'[i]
+    // comparison = value operator reference
+    // value = 'created' | 'completed' | 'box'[i]
+    // operator = '>=' | '<=' | '='
+    // reference = date | 'today' | 'yesterday'
+    // date = '"' \d{4}-\d{2}-\d{2} \d{2}:\d{2} '"'
+    //
+    // maybe in future also, 'name' 'contains' string
+    //
+
     use chrono::NaiveDate;
     use chumsky::{
         Parser,
