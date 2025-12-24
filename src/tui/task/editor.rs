@@ -1,6 +1,5 @@
 use std::io;
 
-use crop::Rope;
 use ratatui::{
     crossterm::{
         cursor::SetCursorStyle,
@@ -12,17 +11,12 @@ use ratatui::{
 };
 
 use crate::{
-    storage::{Task, editing::Pos},
+    storage::{Task, editing::EditResult, keyboard_edit::KeyboardEditable},
     tui::task::scrollbar::ScrollbarWidget,
 };
 
 pub struct EditorTui {
     view_offset: usize,
-    last_state: BufferState,
-}
-
-struct BufferState {
-    cursor: Pos,
 }
 
 pub enum Action {
@@ -31,12 +25,7 @@ pub enum Action {
 
 impl EditorTui {
     pub fn new() -> Self {
-        Self {
-            view_offset: 0,
-            last_state: BufferState {
-                cursor: (0, 0).into(),
-            },
-        }
+        Self { view_offset: 0 }
     }
 
     pub fn handle_key_event(
@@ -67,12 +56,21 @@ impl EditorTui {
         let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
         match key_event.code {
             KeyCode::Esc => *focus = EditorFocus::Unlocked,
-            KeyCode::Char('j') if ctrl => self.scroll_down(task.context().line_len() + 1),
+            KeyCode::Char('j') if ctrl => self.scroll_down(task.editable().inner().line_len() + 1),
             KeyCode::Char('k') if ctrl => self.scroll_up(),
             _ => {
-                if let Some(new_pos) = task.handle_key_event(self.last_state.cursor, key_event) {
-                    self.last_state.cursor = new_pos;
+                // task.title()
+                let editable = task.editable_mut();
+                let op = KeyboardEditable::map_key_event(key_event);
+                if let Some(op) = op {
+                    match editable.apply_text_op(op) {
+                        EditResult::Dirty => task.set_dirty(),
+                        EditResult::Noop => {}
+                    }
                 }
+                // if let Some(new_pos) = task.handle_key_event(self.last_state.cursor, key_event) {
+                //     self.last_state.cursor = new_pos;
+                // }
             }
         }
         None
@@ -96,8 +94,7 @@ pub enum EditorFocus {
 
 pub struct EditorWidget<'a> {
     pub editor: &'a mut EditorTui,
-    pub text: &'a Rope,
-    pub switched_text: bool,
+    pub text: &'a mut KeyboardEditable,
     pub cursor_buf_pos: &'a mut Option<(u16, u16)>,
     pub focus: Option<EditorFocus>,
 }
@@ -114,23 +111,8 @@ impl Widget for EditorWidget<'_> {
 
         let width = text_area.width as usize;
         let height = text_area.height as usize;
-        if self.switched_text {
-            let line_count = self.text.line_len();
-            // Put cursor at end of task.
-            self.editor.last_state = BufferState {
-                cursor: (
-                    line_count.saturating_sub(1),
-                    self.text
-                        .lines()
-                        .next_back()
-                        .map(|l| l.chars().count())
-                        .unwrap_or(0),
-                )
-                    .into(),
-            };
-        }
         // Scroll the cursor into view.
-        let cursor = self.editor.last_state.cursor;
+        let cursor = self.text.cursor();
         if cursor.line < self.editor.view_offset {
             self.editor.view_offset = cursor.line;
         }
@@ -149,6 +131,7 @@ impl Widget for EditorWidget<'_> {
 
         let visible_lines = self
             .text
+            .inner()
             .raw_lines()
             .skip(self.editor.view_offset)
             .take(height);
@@ -187,7 +170,7 @@ impl Widget for EditorWidget<'_> {
 
         ScrollbarWidget {
             view_offset: self.editor.view_offset,
-            total_lines: self.text.line_len(),
+            total_lines: self.text.inner().line_len(),
         }
         .render(scroll_area, buf);
     }

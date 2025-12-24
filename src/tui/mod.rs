@@ -1,5 +1,5 @@
 pub mod app;
 mod filter;
-mod popup;
+pub mod popup;
 mod table;
 pub mod task;

@@ -12,10 +12,12 @@ use ratatui::{
 use crate::{
     FocusState, PopupEnum,
     filter::FilteredData,
-    popup::{ErrorDialog, SaveDialog},
     tui::{
         filter::{FilterTui, FilterWidget},
-        popup::{self, PopupTui, PopupWidget},
+        popup::{
+            self, PopupTui, PopupWidget,
+            dialog::{ErrorDialog, SaveDialog},
+        },
         table::{TableTui, TableWidget},
         task::{TaskFocus, TaskTui, TaskWidget},
     },
@@ -101,7 +103,9 @@ impl AppTui<'_> {
                 match self.task.handle_key_event(
                     key_event,
                     task_focus,
-                    self.table.selected().and_then(|i| data.get_mut(i)),
+                    self.table
+                        .selected()
+                        .and_then(|i| data.get_mut(data.get_id(i))),
                 )? {
                     super::task::Action::Exit => self.focus = FocusState::List,
                     super::task::Action::Unhandled => match key_event.code {
@@ -137,7 +141,7 @@ impl Default for AppTui<'_> {
 
 pub struct AppWidget<'a, 'b> {
     pub app: Rc<RefCell<AppTui<'a>>>,
-    pub data: &'b FilteredData,
+    pub data: &'b mut FilteredData,
     pub cursor_buf_pos: &'b mut Option<(u16, u16)>,
 }
 
@@ -174,10 +178,11 @@ impl Widget for AppWidget<'_, '_> {
         let mut app = app.borrow_mut();
         let selected = app.table.selected();
         let focus_state = app.focus.clone();
+        let id = selected.map(|i| data.get_id(i));
         TaskWidget {
             task: &mut app.task,
             data,
-            id: selected.map(|i| data.get_id(i)),
+            id,
             focus: focus_state.as_task(),
             cursor_buf_pos,
         }

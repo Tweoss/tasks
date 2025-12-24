@@ -1,4 +1,5 @@
 pub mod editing;
+pub mod keyboard_edit;
 mod span_edit;
 mod text_edit;
 
@@ -13,11 +14,10 @@ use std::{
 use chrono::{DateTime, Datelike, Local, NaiveDateTime};
 use crop::Rope;
 use eyre::{Context, OptionExt, Result, eyre};
-use serde::{Deserialize, Serialize};
 
 use crate::storage::{
+    keyboard_edit::KeyboardEditable,
     parser::{Field, Value},
-    text_edit::TextEditable,
 };
 
 pub type Date = NaiveDateTime;
@@ -189,7 +189,7 @@ pub struct Task {
     completed: Option<Date>,
     boxes: Vec<BoxState>,
     tags: HashSet<String>,
-    context: TextEditable,
+    context: KeyboardEditable,
     source_path: Option<PathBuf>,
     dirty: bool,
     extra_fields: Vec<Field>,
@@ -208,7 +208,7 @@ impl Task {
             created,
             boxes,
             tags,
-            context: context.into(),
+            context: KeyboardEditable::from_rope(context, true),
             completed,
             source_path: None,
             dirty: true,
@@ -228,11 +228,18 @@ impl Task {
     pub fn tags(&self) -> &HashSet<String> {
         &self.tags
     }
-    pub fn context(&self) -> &Rope {
-        self.context.inner()
-    }
     pub fn completed(&self) -> &Option<Date> {
         &self.completed
+    }
+    pub fn editable(&self) -> &KeyboardEditable {
+        &self.context
+    }
+    pub fn editable_mut(&mut self) -> &mut KeyboardEditable {
+        &mut self.context
+    }
+
+    pub fn set_dirty(&mut self) {
+        self.dirty = true;
     }
 
     fn from_string(creation_date: Date, path: PathBuf, buf: String) -> Result<Self> {
@@ -355,7 +362,7 @@ impl Task {
             boxes,
             completed: completed?,
             tags,
-            context: Rope::from(context).into(),
+            context: KeyboardEditable::from_rope(context.into(), true),
             source_path: Some(path),
             dirty,
             extra_fields: remaining,
@@ -535,7 +542,7 @@ mod parser {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum BoxState {
     Checked(Date),
     Started,

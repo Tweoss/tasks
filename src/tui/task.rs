@@ -11,7 +11,6 @@ mod scrollbar;
 
 pub struct TaskTui {
     editor: EditorTui,
-    last_id: Option<TaskID>,
 }
 
 pub enum Action {
@@ -22,7 +21,6 @@ pub enum Action {
 impl TaskTui {
     pub fn new() -> Self {
         Self {
-            last_id: None,
             editor: EditorTui::new(),
         }
     }
@@ -89,7 +87,7 @@ impl TaskFocus {
 
 pub struct TaskWidget<'a, 'b> {
     pub task: &'a mut TaskTui,
-    pub data: &'b FilteredData,
+    pub data: &'b mut FilteredData,
     pub id: Option<TaskID>,
     pub focus: Option<TaskFocus>,
     pub cursor_buf_pos: &'a mut Option<(u16, u16)>,
@@ -108,7 +106,7 @@ impl Widget for TaskWidget<'_, '_> {
         let Some(id) = id else {
             return;
         };
-        let Some(v) = data.get(id) else {
+        let Some(v) = data.get_mut(id) else {
             return;
         };
 
@@ -129,12 +127,9 @@ impl Widget for TaskWidget<'_, '_> {
                 _ => Color::Reset,
             }));
 
-        let switched_text = task.last_id != Some(id);
-        task.last_id = Some(id);
         EditorWidget {
             editor: &mut task.editor,
-            text: v.context(),
-            switched_text,
+            text: v.editable_mut(),
             cursor_buf_pos,
             focus: self.focus.and_then(|f| f.as_editor()),
         }

@@ -10,7 +10,6 @@ use std::{
 
 use chrono::{Datelike, Local};
 use eyre::Context;
-use popup::{AddDialog, SaveDialog};
 use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyEvent, KeyEventKind},
@@ -20,10 +19,10 @@ use ratatui::{
 use crate::{
     config::{Config, get_default_app_data_path},
     filter::FilteredData,
-    popup::ErrorDialog,
-    storage::{Data, Task},
+    storage::Data,
     tui::{
         app::{AppTui, AppWidget},
+        popup::dialog::{AddDialog, ErrorDialog, SaveDialog},
         task::TaskFocus,
     },
 };
@@ -180,7 +179,7 @@ impl App {
         let mut cursor_buf_pos = None;
         let app_widget = AppWidget {
             app: tui.clone(),
-            data: &self.data,
+            data: &mut self.data,
             cursor_buf_pos: &mut cursor_buf_pos,
         };
         app_widget.render(frame.area(), frame.buffer_mut());
