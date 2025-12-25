@@ -96,6 +96,8 @@ impl AppTui<'_> {
                 super::filter::Action::Updated(f) => {
                     if let Err(e) = data.set_filter(&f) {
                         log::error!("encountered err {e} while updating filter");
+                    } else {
+                        self.focus = FocusState::List
                     }
                 }
             },
