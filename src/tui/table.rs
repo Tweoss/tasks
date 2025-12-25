@@ -44,15 +44,14 @@ impl TableTui {
                 }
             }
             KeyCode::Char('N') => {
-                if let Some(i) = i
-                    && let Some(BoxState::Started) =
-                        data.step_box_state(i, Local::now().naive_local())
-                {
-                    std::thread::spawn(|| {
-                        Command::new("/usr/bin/osascript")
-                            .args([
-                                "-e",
-                                r#"tell application "Menubar Countdown"
+                if let Some(i) = i {
+                    match data.step_box_state(i, Local::now().naive_local()) {
+                        Some(BoxState::Started) => {
+                            std::thread::spawn(|| {
+                                Command::new("/usr/bin/osascript")
+                                    .args([
+                                        "-e",
+                                        r#"tell application "Menubar Countdown"
                                     	set hours to "0"
                                         set minutes to "25"
                                      	set seconds to "0"
@@ -60,10 +59,24 @@ impl TableTui {
                                         set repeat alert sound to false
                                     	start timer
                                     end tell"#,
-                            ])
-                            .output()
-                            .unwrap();
-                    });
+                                    ])
+                                    .output()
+                                    .unwrap();
+                            });
+                        }
+                        Some(BoxState::Checked(_)) => {
+                            std::thread::spawn(|| {
+                                Command::new("/usr/bin/osascript")
+                                    .args([
+                                        "-e",
+                                        r#"tell application "Menubar Countdown" to stop timer"#,
+                                    ])
+                                    .output()
+                                    .unwrap();
+                            });
+                        }
+                        _ => {}
+                    }
                 };
             }
             KeyCode::Backspace => {
