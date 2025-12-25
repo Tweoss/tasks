@@ -133,9 +133,10 @@ impl Widget for TableWidget<'_, '_> {
         let max_boxes =
             data.iter().map(|t| t.boxes().len()).max().unwrap_or(0) * CHECK.chars().count();
         let list_split = [
-            Constraint::Fill(1),
+            Constraint::Fill(2),
             Constraint::Min(17),
             Constraint::Min(max_boxes.try_into().unwrap()),
+            Constraint::Min(1),
         ];
         let rows = data
             .iter()
@@ -161,7 +162,8 @@ impl Widget for TableWidget<'_, '_> {
                     )
                     .left_aligned(),
                 );
-                Row::new(vec![text_cell, completed_cell, box_cell])
+                let dirty_cell = Cell::from(if t.dirty() { "+" } else { "" });
+                Row::new(vec![text_cell, completed_cell, box_cell, dirty_cell])
                     .style(Style::new().bg(Color::Reset))
             })
             .collect::<Vec<_>>();
@@ -181,8 +183,13 @@ impl Widget for TableWidget<'_, '_> {
             .highlight_spacing(HighlightSpacing::Always)
             .block(Block::bordered().border_style(Style::new().fg(style)))
             .header(
-                Row::new(vec!["Task".bold(), "Completed At".bold(), "Time".bold()])
-                    .bottom_margin(1),
+                Row::new(vec![
+                    "Task".bold(),
+                    "Completed At".bold(),
+                    "Time".bold(),
+                    "🧼".into(),
+                ])
+                .bottom_margin(1),
             );
 
         StatefulWidget::render(t, area, buf, &mut table.table_state);

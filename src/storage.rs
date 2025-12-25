@@ -237,6 +237,9 @@ impl Task {
     pub fn editable_mut(&mut self) -> &mut KeyboardEditable {
         &mut self.context
     }
+    pub fn dirty(&self) -> bool {
+        self.dirty
+    }
 
     pub fn set_dirty(&mut self) {
         self.dirty = true;
