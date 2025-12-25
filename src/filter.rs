@@ -65,9 +65,10 @@ impl FilteredData {
     }
     pub fn push(&mut self, task: Task) {
         let new_index = self.data.tasks().len();
+        let visible_index = self.visible.len();
         self.visible.push(new_index);
         self.data.push(task);
-        self.recalculate_is_visible(new_index);
+        self.recalculate_is_visible(visible_index);
     }
     fn recalculate_is_visible(&mut self, visible_index: usize) {
         let Some(expr) = &self.filter else {
