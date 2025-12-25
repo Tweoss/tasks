@@ -11,7 +11,7 @@ use ratatui::{
 };
 
 use crate::{
-    storage::{Task, editing::EditResult, keyboard_edit::KeyboardEditable},
+    storage::{Task, keyboard_edit::KeyboardEditable},
     tui::task::scrollbar::ScrollbarWidget,
 };
 
@@ -60,13 +60,10 @@ impl EditorTui {
             KeyCode::Char('k') if ctrl => self.scroll_up(),
             _ => {
                 // task.title()
-                let editable = task.editable_mut();
+                let mut editable = task.editable_mut();
                 let op = KeyboardEditable::map_key_event(key_event);
                 if let Some(op) = op {
-                    match editable.apply_text_op(op) {
-                        EditResult::Dirty => task.set_dirty(),
-                        EditResult::Noop => {}
-                    }
+                    editable.apply_text_op(op);
                 }
                 // if let Some(new_pos) = task.handle_key_event(self.last_state.cursor, key_event) {
                 //     self.last_state.cursor = new_pos;
@@ -94,7 +91,7 @@ pub enum EditorFocus {
 
 pub struct EditorWidget<'a> {
     pub editor: &'a mut EditorTui,
-    pub text: &'a mut KeyboardEditable,
+    pub text: &'a KeyboardEditable,
     pub cursor_buf_pos: &'a mut Option<(u16, u16)>,
     pub focus: Option<EditorFocus>,
 }

@@ -18,6 +18,7 @@ use eyre::{Context, OptionExt, Result, eyre};
 use crate::storage::{
     keyboard_edit::KeyboardEditable,
     parser::{Field, Value},
+    text_edit::TextOp,
 };
 
 pub type Date = NaiveDateTime;
@@ -194,6 +195,21 @@ pub struct Task {
     dirty: bool,
     extra_fields: Vec<Field>,
 }
+
+pub struct TaskEditableMut<'a> {
+    dirty_bit: &'a mut bool,
+    editable: &'a mut KeyboardEditable,
+}
+
+impl TaskEditableMut<'_> {
+    pub fn apply_text_op(&mut self, op: TextOp) {
+        match self.editable.apply_text_op(op) {
+            editing::EditResult::Noop => *self.dirty_bit = true,
+            editing::EditResult::Dirty => {}
+        }
+    }
+}
+
 impl Task {
     pub fn new(
         title: String,
@@ -234,15 +250,19 @@ impl Task {
     pub fn editable(&self) -> &KeyboardEditable {
         &self.context
     }
-    pub fn editable_mut(&mut self) -> &mut KeyboardEditable {
-        &mut self.context
+    pub fn editable_mut(&mut self) -> TaskEditableMut<'_> {
+        TaskEditableMut {
+            dirty_bit: &mut self.dirty,
+            editable: &mut self.context,
+        }
     }
     pub fn dirty(&self) -> bool {
         self.dirty
     }
 
-    pub fn set_dirty(&mut self) {
+    pub fn set_tags(&mut self, tags: Vec<String>) {
         self.dirty = true;
+        self.tags = tags.into_iter().collect();
     }
 
     fn from_string(creation_date: Date, path: PathBuf, buf: String) -> Result<Self> {

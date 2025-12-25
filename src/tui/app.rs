@@ -85,6 +85,7 @@ impl AppTui<'_> {
                         }
                     }
                     KeyCode::Char('f') => self.focus = FocusState::Filter,
+                    KeyCode::Char('t') => self.focus = FocusState::Task(TaskFocus::tags_locked()),
                     KeyCode::Enter => self.focus = FocusState::Task(TaskFocus::context_locked()),
                     KeyCode::Right => self.focus = FocusState::Task(TaskFocus::context_unlocked()),
                     _ => (),
@@ -103,9 +104,10 @@ impl AppTui<'_> {
                 match self.task.handle_key_event(
                     key_event,
                     task_focus,
-                    self.table
-                        .selected()
-                        .and_then(|i| data.get_mut(data.get_id(i))),
+                    self.table.selected().and_then(|i| {
+                        let task_id = data.get_id(i);
+                        data.get_mut(task_id).map(|t| (t, task_id))
+                    }),
                 )? {
                     super::task::Action::Exit => self.focus = FocusState::List,
                     super::task::Action::Unhandled => match key_event.code {
@@ -159,7 +161,7 @@ impl Widget for AppWidget<'_, '_> {
         let app = app.clone();
         let is_focused = matches!(app.borrow().focus, FocusState::Filter);
         FilterWidget {
-            filter: &mut app.borrow_mut().filter,
+            tui: &mut app.borrow_mut().filter,
             is_focused,
             cursor_buf_pos,
         }

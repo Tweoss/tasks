@@ -53,7 +53,7 @@ impl FilterTui {
 }
 
 pub struct FilterWidget<'a> {
-    pub filter: &'a mut FilterTui,
+    pub tui: &'a mut FilterTui,
     pub is_focused: bool,
     pub cursor_buf_pos: &'a mut Option<(u16, u16)>,
 }
@@ -71,8 +71,8 @@ impl Widget for FilterWidget<'_> {
         filter_block.render(outer_area, buf);
 
         EditorWidget {
-            editor: &mut self.filter.editor,
-            text: &mut self.filter.textbox,
+            editor: &mut self.tui.editor,
+            text: &mut self.tui.textbox,
             cursor_buf_pos: self.cursor_buf_pos,
             focus: if self.is_focused {
                 Some(EditorFocus::Locked)

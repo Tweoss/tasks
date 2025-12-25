@@ -3,7 +3,7 @@ use eyre::Result;
 
 use crate::storage::{BoxState, Data, Date, Task};
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash)]
 pub struct TaskID(usize);
 
 #[derive(Debug)]

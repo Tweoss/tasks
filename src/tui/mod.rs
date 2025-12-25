@@ -9,3 +9,4 @@ pub mod task;
 pub const FOCUSED_BORDER: Color = Color::LightBlue;
 pub const FOCUSED_BACKGROUND: Color = Color::Blue;
 pub const UNFOCUSED_BORDER: Color = Color::DarkGray;
+pub const LOCKED_EDITOR_BORDER: Color = Color::Green;
