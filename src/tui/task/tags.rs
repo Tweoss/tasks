@@ -73,10 +73,6 @@ impl TagsTui {
             }
             _ => {
                 let text_op = KeyboardEditable::map_key_event(key_event)?;
-                // let (_, textbox) = self
-                //     .task_to_editor
-                //     .entry(task_id)
-                //     .or_insert_with(|| derive_editable(task));
                 match text_op {
                     TextOp::InsertText(ref cow) => {
                         if !cow.contains(|c: char| c.is_newline()) {

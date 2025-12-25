@@ -132,9 +132,10 @@ impl Widget for TableWidget<'_, '_> {
         let TableWidget(table, focus, data) = self;
         let max_boxes =
             data.iter().map(|t| t.boxes().len()).max().unwrap_or(0) * CHECK.chars().count();
+        const DATE_STRING_WIDTH: u16 = 17;
         let list_split = [
             Constraint::Fill(2),
-            Constraint::Min(17),
+            Constraint::Min(DATE_STRING_WIDTH),
             Constraint::Min(max_boxes.try_into().unwrap()),
             Constraint::Min(1),
         ];

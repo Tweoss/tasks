@@ -1,6 +1,5 @@
 mod config;
 mod filter;
-mod popup;
 mod storage;
 mod tui;
 
@@ -27,7 +26,7 @@ use crate::{
     },
 };
 
-// Main Window
+// TODO
 //
 // --------------------------------------
 // filter expression (default: not completed)
@@ -148,6 +147,7 @@ impl App {
             Err((d, e)) => {
                 let e = e.wrap_err("Error loading data");
                 let error = format!("{:?}", e);
+                log::error!("{e}");
                 tui.set_error_focus(e);
                 eprintln!("{error}");
                 d
@@ -183,6 +183,7 @@ impl App {
             cursor_buf_pos: &mut cursor_buf_pos,
         };
         app_widget.render(frame.area(), frame.buffer_mut());
+        // Render the terminal cursor.
         if let Some(position) = cursor_buf_pos {
             frame.set_cursor_position(position);
         }

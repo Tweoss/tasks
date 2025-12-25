@@ -59,15 +59,11 @@ impl EditorTui {
             KeyCode::Char('j') if ctrl => self.scroll_down(task.editable().inner().line_len() + 1),
             KeyCode::Char('k') if ctrl => self.scroll_up(),
             _ => {
-                // task.title()
                 let mut editable = task.editable_mut();
                 let op = KeyboardEditable::map_key_event(key_event);
                 if let Some(op) = op {
                     editable.apply_text_op(op);
                 }
-                // if let Some(new_pos) = task.handle_key_event(self.last_state.cursor, key_event) {
-                //     self.last_state.cursor = new_pos;
-                // }
             }
         }
         None
@@ -138,6 +134,7 @@ impl Widget for EditorWidget<'_> {
             let mut x_offset = 0;
             let y = text_area.y + y as u16;
             while x_offset < width {
+                // Style spaces as dark gray.
                 let space_style = Style::new().fg(Color::DarkGray);
                 let x = (text_area.x as usize + x_offset) as u16;
                 let Some(first_char) = l.chars().next() else {

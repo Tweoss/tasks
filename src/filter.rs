@@ -64,7 +64,6 @@ impl FilteredData {
         self.data.write_dirty()
     }
     pub fn push(&mut self, task: Task) {
-        // TODO: properly recalculate visible
         let new_index = self.data.tasks().len();
         self.visible.push(new_index);
         self.data.push(task);

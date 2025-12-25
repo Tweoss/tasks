@@ -225,7 +225,6 @@ pub mod dialog {
     #[derive(Debug, Clone)]
     pub struct ErrorDialog {
         pub error: String,
-        // pub previous_state: Option<Box<FocusState<'a>>>,
     }
     pub enum ErrorAction {
         Okay,
