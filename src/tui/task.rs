@@ -181,7 +181,7 @@ impl Widget for TaskWidget<'_, '_> {
                 .iter()
                 .map(|b| match b {
                     BoxState::Checked(date_time) => {
-                        format!("Checked at {}\n", date_time.format("%Y-%m-%m %H:%M:%S"))
+                        format!("Checked at {}\n", date_time.format("%Y-%m-%d %H:%M:%S"))
                     }
                     BoxState::Started => "Started\n".to_string(),
                     BoxState::Empty => "Empty\n".to_string(),
