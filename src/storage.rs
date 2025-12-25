@@ -204,8 +204,8 @@ pub struct TaskEditableMut<'a> {
 impl TaskEditableMut<'_> {
     pub fn apply_text_op(&mut self, op: TextOp) {
         match self.editable.apply_text_op(op) {
-            editing::EditResult::Noop => *self.dirty_bit = true,
-            editing::EditResult::Dirty => {}
+            editing::EditResult::Noop => {}
+            editing::EditResult::Dirty => *self.dirty_bit = true,
         }
     }
 }
