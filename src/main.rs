@@ -79,15 +79,18 @@ fn main() {
         return;
     }
 
+    // Persist any config errors till we set up TUI.
+    let mut config_err = None;
     let config = match Config::load() {
         Ok(c) => c,
         Err((c, r)) => {
             eprintln!("failed to load config, continuing with default\n{r:?}");
+            config_err = Some(r.wrap_err("Error loading config"));
             c
         }
     };
     setup_logger(&config).expect("setting up logger");
-    let (mut app, tui) = App::load(&config);
+    let (mut app, tui) = App::load(&config, config_err);
     let terminal = ratatui::init();
     app.run(terminal, tui);
     ratatui::restore();
@@ -136,8 +139,11 @@ pub enum PopupEnum<'a> {
 }
 
 impl App {
-    pub fn load<'a>(config: &Config) -> (Self, AppTui<'a>) {
-        let mut tui = AppTui::new();
+    pub fn load<'a>(
+        config: &Config,
+        mut reporting_err: Option<eyre::Report>,
+    ) -> (Self, AppTui<'a>) {
+        let mut tui = AppTui::new(config.keybinds.clone());
         let data = match Data::load(
             shellexpand::tilde(&config.data_path.to_string_lossy())
                 .into_owned()
@@ -146,13 +152,16 @@ impl App {
             Ok(d) => d,
             Err((d, e)) => {
                 let e = e.wrap_err("Error loading data");
-                let error = format!("{:?}", e);
-                log::error!("{e}");
-                tui.set_error_focus(e);
-                eprintln!("{error}");
+                reporting_err = reporting_err.or(Some(e));
                 d
             }
         };
+        if let Some(e) = reporting_err {
+            let error = format!("{:?}", e);
+            log::error!("{e}");
+            tui.set_error_focus(e);
+            eprintln!("{error}");
+        }
         let data = FilteredData::new(data);
         if !data.is_empty() {
             tui.set_table_index(0);

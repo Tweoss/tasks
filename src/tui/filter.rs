@@ -50,6 +50,11 @@ impl FilterTui {
             }
         }
     }
+
+    pub fn set_text(&mut self, text: String) {
+        self.editor.set_text(&text);
+        self.textbox = KeyboardEditable::from_rope(text.into(), true);
+    }
 }
 
 pub struct FilterWidget<'a> {

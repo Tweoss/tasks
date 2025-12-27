@@ -1,13 +1,16 @@
 use std::{
     cell::{RefCell, RefMut},
+    collections::HashMap,
     rc::Rc,
 };
 
+use crossterm::event::KeyCode;
 use ratatui::{
-    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+    crossterm::event::{KeyEvent, KeyModifiers},
     layout::{Constraint, Layout},
     widgets::Widget,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     FocusState, PopupEnum,
@@ -29,6 +32,13 @@ pub struct AppTui<'a> {
     table: TableTui,
     task: TaskTui,
     popup: PopupTui,
+    mode: Mode,
+    keybinds: HashMap<Mode, HashMap<KeyCode, KeyAction>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub enum KeyAction {
+    SetFilter(String),
 }
 
 pub enum Action {
@@ -36,14 +46,22 @@ pub enum Action {
     Unhandled,
 }
 
+#[derive(PartialEq, Eq, Hash, Debug, Deserialize, Serialize, Clone)]
+pub enum Mode {
+    Normal,
+    Key(KeyCode),
+}
+
 impl AppTui<'_> {
-    pub fn new() -> Self {
+    pub fn new(keybinds: HashMap<Mode, HashMap<KeyCode, KeyAction>>) -> Self {
         Self {
             filter: FilterTui::new(),
             focus: FocusState::List,
             table: TableTui::new(),
             task: TaskTui::new(),
             popup: PopupTui::new(),
+            mode: Mode::Normal,
+            keybinds,
         }
     }
 
@@ -88,7 +106,22 @@ impl AppTui<'_> {
                     KeyCode::Char('t') => self.focus = FocusState::Task(TaskFocus::tags_locked()),
                     KeyCode::Enter => self.focus = FocusState::Task(TaskFocus::context_locked()),
                     KeyCode::Right => self.focus = FocusState::Task(TaskFocus::context_unlocked()),
-                    _ => (),
+                    _ => {
+                        if let Some(action) = self
+                            .keybinds
+                            .get(&self.mode)
+                            .and_then(|m| m.get(&key_event.code))
+                        {
+                            match action {
+                                KeyAction::SetFilter(s) => {
+                                    self.filter.set_text(s.clone());
+                                    if let Err(e) = data.set_filter(s) {
+                                        log::error!("encountered err {e} while updating filter");
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
             },
             FocusState::Filter => match self.filter.handle_key(key_event)? {
@@ -139,7 +172,7 @@ impl AppTui<'_> {
 
 impl Default for AppTui<'_> {
     fn default() -> Self {
-        Self::new()
+        Self::new(HashMap::new())
     }
 }
 

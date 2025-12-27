@@ -76,6 +76,10 @@ impl EditorTui {
         // Weird math to avoid panic.
         self.view_offset = (self.view_offset + 2).min(line_count).saturating_sub(1)
     }
+
+    pub fn set_text(&mut self, _text: &str) {
+        self.view_offset = 0;
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
