@@ -153,6 +153,7 @@ impl Task {
             BooleanExpr::Tag(t) => self.tags().contains(t),
             BooleanExpr::Box { index } => self.get_box(*index).is_some(),
             BooleanExpr::Completed => self.completed().is_some(),
+            BooleanExpr::Const(b) => *b,
         }
     }
     fn eval(&self, expr: &ValueExpr) -> Value {
@@ -184,6 +185,7 @@ pub enum BooleanExpr {
         index: isize,
     },
     Completed,
+    Const(bool),
 }
 
 #[derive(Clone, Debug)]
@@ -391,6 +393,10 @@ mod parser {
                         .map(|index| BooleanExpr::Box { index }),
                 ),
                 just("completed").to(BooleanExpr::Completed),
+                just("true")
+                    .to(true)
+                    .or(just("false").to(false))
+                    .map(BooleanExpr::Const),
             ))
             .padded()
         })
