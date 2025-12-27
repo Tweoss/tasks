@@ -143,9 +143,7 @@ impl Task {
                 lhs,
                 rhs,
             } => {
-                let (Some(lhs), Some(rhs)) = (self.eval(lhs), self.eval(rhs)) else {
-                    return false;
-                };
+                let (lhs, rhs) = (self.eval(lhs), self.eval(rhs));
                 match comparator {
                     Comp::Leq => lhs <= rhs,
                     Comp::Geq => lhs >= rhs,
@@ -157,18 +155,14 @@ impl Task {
             BooleanExpr::Completed => self.completed().is_some(),
         }
     }
-    fn eval(&self, expr: &DateExpr) -> Option<NaiveDateTime> {
+    fn eval(&self, expr: &ValueExpr) -> Value {
         match expr {
-            DateExpr::Date(naive_date) => Some(*naive_date),
-            DateExpr::Box { index } => self.get_box(*index).and_then(|b| {
-                if let BoxState::Checked(naive_date_time) = b {
-                    Some(naive_date_time)
-                } else {
-                    None
-                }
-            }),
-            DateExpr::Completed => *self.completed(),
-            DateExpr::Created => Some(*self.created()),
+            ValueExpr::Date(naive_date) => Value::Date(Some(*naive_date)),
+            ValueExpr::Box { index } => Value::Box(self.get_box(*index)),
+            ValueExpr::Completed => Value::Date(*self.completed()),
+            ValueExpr::Created => Value::Date(Some(*self.created())),
+            ValueExpr::Started => Value::Box(Some(BoxState::Started)),
+            ValueExpr::Empty => Value::Box(Some(BoxState::Empty)),
         }
     }
 }
@@ -182,8 +176,8 @@ pub enum BooleanExpr {
     },
     Comparison {
         comparator: Comp,
-        lhs: DateExpr,
-        rhs: DateExpr,
+        lhs: ValueExpr,
+        rhs: ValueExpr,
     },
     Tag(String),
     Box {
@@ -193,11 +187,44 @@ pub enum BooleanExpr {
 }
 
 #[derive(Clone, Debug)]
-pub enum DateExpr {
+pub enum ValueExpr {
     Date(NaiveDateTime),
     Box { index: isize },
     Completed,
     Created,
+    Started,
+    Empty,
+}
+
+enum Value {
+    Date(Option<NaiveDateTime>),
+    Box(Option<BoxState>),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        self.partial_cmp(other) == Some(std::cmp::Ordering::Equal)
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Date(l), Self::Date(r)) => l.partial_cmp(r),
+            (Self::Box(l), Self::Box(r)) => match (l.as_ref()?, r.as_ref()?) {
+                (BoxState::Checked(l), BoxState::Checked(r)) => l.partial_cmp(r),
+                (BoxState::Started, BoxState::Started) => Some(std::cmp::Ordering::Equal),
+                (BoxState::Empty, BoxState::Empty) => Some(std::cmp::Ordering::Equal),
+                _ => None,
+            },
+            (Self::Date(l), Self::Box(r)) | (Self::Box(r), Self::Date(l)) => {
+                match (l.as_ref()?, r.as_ref()?) {
+                    (date, BoxState::Checked(box_time)) => date.partial_cmp(box_time),
+                    _ => None,
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -218,9 +245,9 @@ mod parser {
     // filter = '(' delimited(filter, '|') ')' | '(' delimited(filter, '&') ')' | 'not' filter | existence | comparison
     // existence = 'completed' | 'box'[i]
     // comparison = value operator reference
-    // value = 'created' | 'completed' | 'box'[i]
+    // value = 'created' | 'completed' | 'box'[i] | 'started' | 'empty'
     // operator = '>=' | '<=' | '='
-    // reference = date | 'today' | 'yesterday'
+    // reference = date
     // date = '"' \d{4}-\d{2}-\d{2} \d{2}:\d{2} '"'
     //
     // maybe in future also, 'name' 'contains' string
@@ -236,7 +263,7 @@ mod parser {
     };
     use eyre::{Result, eyre};
 
-    use crate::filter::{BooleanExpr, Comp, DateExpr};
+    use crate::filter::{BooleanExpr, Comp, ValueExpr};
 
     impl super::BooleanExpr {
         pub fn from_str(input: &str) -> Result<Option<super::BooleanExpr>> {
@@ -277,8 +304,8 @@ mod parser {
             digits(10).exactly(count).to_slice().try_map(parse_uint)
         }
         let date_expr = choice((
-            just("completed").to(DateExpr::Completed),
-            just("created").to(DateExpr::Created),
+            just("completed").to(ValueExpr::Completed),
+            just("created").to(ValueExpr::Created),
             just("box[").ignore_then(
                 just("-")
                     .to(())
@@ -287,7 +314,7 @@ mod parser {
                     .to_slice()
                     .try_map(parse_int)
                     .then_ignore(just("]"))
-                    .map(|index| DateExpr::Box { index }),
+                    .map(|index| ValueExpr::Box { index }),
             ),
             digit_count(4)
                 .then_ignore(just("-"))
@@ -303,7 +330,9 @@ mod parser {
                         .and_then(|d| d.and_hms_opt(hour as u32, min as u32, 0))
                         .ok_or_else(|| Rich::custom(span, "invalid date"))
                 })
-                .map(DateExpr::Date),
+                .map(ValueExpr::Date),
+            just("started").to(ValueExpr::Started),
+            just("empty").to(ValueExpr::Empty),
         ))
         .padded();
 

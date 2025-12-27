@@ -565,7 +565,7 @@ mod parser {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BoxState {
     Checked(Date),
     Started,
