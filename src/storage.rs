@@ -109,7 +109,7 @@ impl Data {
                 .clone()
                 .join(task.created.year().to_string())
                 .join(format!("{:02}", task.created.month()))
-                .join(format!("{}.md", task.title))
+                .join(format!("{}.md", urlencoding::encode(&task.title)))
         });
         let parent = path.parent().unwrap();
         create_dir_all(parent).wrap_err(format!("creating parent '{}'", parent.display()))?;
@@ -266,11 +266,14 @@ impl Task {
     }
 
     fn from_string(creation_date: Date, path: PathBuf, buf: String) -> Result<Self> {
-        let title = path
-            .file_stem()
-            .ok_or_eyre("invalid name")?
-            .to_string_lossy()
-            .into_owned();
+        let title = urlencoding::decode(
+            &path
+                .file_stem()
+                .ok_or_eyre("invalid name")?
+                .to_string_lossy(),
+        )
+        .wrap_err("decoding path")?
+        .to_string();
 
         // Find front matter (wrapped by `---`).
         let mut line_offset = 0;
