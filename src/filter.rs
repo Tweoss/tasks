@@ -59,6 +59,10 @@ impl FilteredData {
         self.data.remove_empty_state(self.visible[index]);
         self.recalculate_is_visible(index);
     }
+    pub fn set_tags(&mut self, index: usize, tags: Vec<String>) {
+        self.data.set_tags(self.visible[index], tags);
+        self.recalculate_is_visible(index);
+    }
 
     pub fn write_dirty(&mut self) -> Result<()> {
         self.data.write_dirty()

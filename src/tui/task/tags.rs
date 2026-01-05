@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    filter::TaskID,
+    filter::{FilteredData, TaskID},
     storage::{Task, keyboard_edit::KeyboardEditable, text_edit::TextOp},
     tui::{
         FOCUSED_BORDER, LOCKED_EDITOR_BORDER, UNFOCUSED_BORDER,
@@ -38,9 +38,13 @@ impl TagsTui {
         &mut self,
         key_event: KeyEvent,
         focus: &mut EditorFocus,
-        task: Option<(&mut Task, TaskID)>,
+        data: &mut FilteredData,
+        task_id: Option<(usize, TaskID)>,
     ) -> Option<Action> {
-        let Some((task, task_id)) = task else {
+        let Some((visible_index, task_id)) = task_id else {
+            return Some(Action::Unhandled);
+        };
+        let Some(task) = data.get(task_id) else {
             return Some(Action::Unhandled);
         };
         if matches!(focus, EditorFocus::Unlocked) {
@@ -59,7 +63,7 @@ impl TagsTui {
                 *focus = EditorFocus::Unlocked;
                 let inner = textbox.inner().to_string();
                 match inline_tags().parse(&inner).into_result() {
-                    Ok(v) => task.set_tags(v),
+                    Ok(v) => data.set_tags(visible_index, v),
                     Err(e) => {
                         log::warn!("error parsing tags {e:?}")
                     }
@@ -89,7 +93,7 @@ impl TagsTui {
     }
 }
 
-fn derive_editable(task: &mut Task) -> (EditorTui, KeyboardEditable) {
+fn derive_editable(task: &Task) -> (EditorTui, KeyboardEditable) {
     (
         EditorTui::new(),
         KeyboardEditable::from_rope(

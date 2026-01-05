@@ -33,16 +33,20 @@ impl TaskTui {
         &mut self,
         key_event: KeyEvent,
         focus: &mut TaskFocus,
-        task: Option<(&mut Task, TaskID)>,
+        data: &mut FilteredData,
+        task: Option<(usize, TaskID)>,
     ) -> Option<Action> {
         match focus {
             TaskFocus::Boxes => {}
             TaskFocus::Context(editor_focus) => {
-                self.editor
-                    .handle_key_event(key_event, editor_focus, task.map(|t| t.0))?;
+                self.editor.handle_key_event(
+                    key_event,
+                    editor_focus,
+                    task.and_then(|(_, id)| data.get_mut(id)),
+                )?;
             }
             TaskFocus::Tags(focus) => {
-                self.tags.handle_key(key_event, focus, task)?;
+                self.tags.handle_key(key_event, focus, data, task)?;
             }
         }
 

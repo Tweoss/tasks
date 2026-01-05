@@ -5,7 +5,6 @@ pub mod text_edit;
 
 use std::{
     collections::{HashMap, HashSet},
-    ffi::OsStr,
     fmt::Display,
     fs::{self, OpenOptions, create_dir_all},
     io::{Read, Write},
@@ -220,6 +219,10 @@ impl Data {
         self.tasks[index].boxes.remove(box_i);
     }
 
+    pub fn set_tags(&mut self, index: usize, tags: Vec<String>) {
+        self.tasks[index].set_tags(tags);
+    }
+
     pub fn push(&mut self, task: Task) {
         self.tasks.push(task);
         self.set_dirty(self.tasks.len() - 1);
@@ -305,7 +308,7 @@ impl Task {
         self.dirty
     }
 
-    pub fn set_tags(&mut self, tags: Vec<String>) {
+    fn set_tags(&mut self, tags: Vec<String>) {
         self.dirty = true;
         self.tags = tags.into_iter().collect();
     }
@@ -343,10 +346,9 @@ impl Task {
             errors: Vec<Rich<'_, char>>,
         ) -> eyre::Report {
             let e = errors.first().unwrap();
-            dbg!(field.span);
             let (line, col) = frontmatter.get_location(field.span.start);
             let (end_line, end_col) = frontmatter.get_location(field.span.end);
-            eyre!("{name} failed to parse, {e} between {line}:{col} and {end_line}:{end_col}")
+            eyre!("'{name}' failed to parse, {e} between {line}:{col} and {end_line}:{end_col}")
         }
         fn run_parser<'src, T>(
             parser: impl Parser<'src, &'src str, T, chumsky::extra::Err<Rich<'src, char>>>,
@@ -371,12 +373,12 @@ impl Task {
                     // Last wins.
                     created = run_parser(date_field(), key, &value, &frontmatter, field);
                 }
-                "boxes" if value.trim().is_empty() => boxes = Ok(None),
+                "boxes" if value.trim().is_empty() => boxes = Ok(Some(vec![])),
                 "boxes" => boxes = run_parser(box_field(), key, &value, &frontmatter, field),
                 "completed" => {
                     completed = run_parser(date_field(), key, &value, &frontmatter, field)
                 }
-                "tags" if value.trim().is_empty() => tags = Ok(None),
+                "tags" if value.trim().is_empty() => tags = Ok(Some(vec![])),
                 "tags" => tags = run_parser(tag_field(), key, &value, &frontmatter, field),
                 "rename" => rename = run_parser(rename_field(), key, &value, &frontmatter, field),
                 _ => remaining.push(Field {
@@ -534,7 +536,7 @@ mod parser {
     }
     impl Frontmatter {
         pub fn get_location(&self, byte: usize) -> (usize, usize) {
-            let s = dbg!(self.text.split_at(byte).0);
+            let s = self.text.split_at(byte).0;
             let out = (
                 self.line_offset + s.lines().count(),
                 1 + s.lines().last().map(|l| l.chars().count()).unwrap_or(0),

@@ -139,10 +139,8 @@ impl AppTui<'_> {
                 match self.task.handle_key_event(
                     key_event,
                     task_focus,
-                    self.table.selected().and_then(|i| {
-                        let task_id = data.get_id(i);
-                        data.get_mut(task_id).map(|t| (t, task_id))
-                    }),
+                    data,
+                    self.table.selected().map(|i| (i, data.get_id(i))),
                 )? {
                     super::task::Action::Exit => self.focus = FocusState::List,
                     super::task::Action::Unhandled => match key_event.code {
