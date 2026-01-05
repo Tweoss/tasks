@@ -163,6 +163,7 @@ impl App {
             eprintln!("{error}");
         }
         let data = FilteredData::new(data);
+        dbg!(&data);
         if !data.is_empty() {
             tui.set_table_index(0);
         }

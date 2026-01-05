@@ -12,12 +12,13 @@ use std::{
 };
 
 use chrono::{DateTime, Datelike, Local, NaiveDateTime};
+use chumsky::{Parser, error::Rich, span::Spanned};
 use crop::Rope;
 use eyre::{Context, OptionExt, Result, eyre};
 
 use crate::storage::{
     keyboard_edit::KeyboardEditable,
-    parser::{Field, Value},
+    parser::{Field, Frontmatter, Value, box_field, date_field, tag_field},
     text_edit::TextOp,
 };
 
@@ -284,62 +285,58 @@ impl Task {
         let (front_matter, context) = buf
             .split_once("---\n")
             .ok_or_eyre("missing frontmatter end marker")?;
-        let fields: Vec<Field> = parser::parse_fields(front_matter, line_offset)?;
+        let frontmatter = parser::parse_fields(front_matter, line_offset)?;
+        // let fields: Vec<Field> = parser::parse_fields(front_matter, line_offset)?;
         let mut created = Ok(None);
         let mut boxes = Ok(None);
         let mut tags = Ok(None);
         let mut completed = Ok(None);
 
+        fn format_error(
+            name: &str,
+            frontmatter: &Frontmatter,
+            field: &Spanned<(String, String)>,
+            errors: Vec<Rich<'_, char>>,
+        ) -> eyre::Report {
+            let e = errors.first().unwrap();
+            dbg!(field.span);
+            let (line, col) = frontmatter.get_location(field.span.start);
+            let (end_line, end_col) = frontmatter.get_location(field.span.end);
+            eyre!("{name} failed to parse, {e} between {line}:{col} and {end_line}:{end_col}")
+        }
+        fn run_parser<'src, T>(
+            parser: impl Parser<'src, &'src str, T, chumsky::extra::Err<Rich<'src, char>>>,
+            key: &str,
+            value: &'src str,
+            frontmatter: &Frontmatter,
+            field: &Spanned<(String, String)>,
+        ) -> Result<Option<T>, eyre::Report> {
+            parser
+                .parse(value)
+                .into_result()
+                .map(Some)
+                .map_err(|e| format_error(key, frontmatter, field, e))
+        }
+
         let mut remaining = vec![];
-        for field in fields {
-            match (field.key.as_str(), field.value) {
-                ("created", v) => {
+        for field in &frontmatter.parsed_fields {
+            let key = field.0.as_str();
+            let value = field.1.clone();
+            match key {
+                "created" => {
                     // Last wins.
-                    match v {
-                        Value::Date(date) => {
-                            created = Ok(Some(date));
-                        }
-                        t => {
-                            created = Err(eyre!("created should be in date format, found {t}"));
-                        }
-                    }
+                    created = run_parser(date_field(), key, &value, &frontmatter, field);
                 }
-                ("boxes", v) => match v {
-                    Value::BoxList(list) => {
-                        boxes = Ok(Some(list));
-                    }
-                    Value::Unknown(s) if s.is_empty() => boxes = Ok(Some(vec![])),
-                    t => {
-                        boxes = Err(eyre!("boxes should be in list format, found {t}"));
-                    }
-                },
-                ("completed", v) => {
-                    match v {
-                        Value::Date(date) => {
-                            completed = Ok(Some(date));
-                        }
-                        Value::Unknown(s) if s.is_empty() => {
-                            completed = Ok(None);
-                        }
-                        t => {
-                            completed = Err(eyre!(
-                                "completed should be in date format or empty, found {t}"
-                            ))
-                        }
-                    };
+                "boxes" if key.is_empty() => boxes = Ok(None),
+                "boxes" => boxes = run_parser(box_field(), key, &value, &frontmatter, field),
+                "completed" => {
+                    completed = run_parser(date_field(), key, &value, &frontmatter, field)
                 }
-                ("tags", v) => match v {
-                    Value::TagList(list) => {
-                        tags = Ok(Some(list.into_iter().collect()));
-                    }
-                    Value::Unknown(s) if s.is_empty() => tags = Ok(Some(HashSet::new())),
-                    t => {
-                        tags = Err(eyre!("tags should be in list format, found {t}"));
-                    }
-                },
-                (k, value) => remaining.push(Field {
-                    key: k.into(),
-                    value,
+                "tags" if key.is_empty() => tags = Ok(None),
+                "tags" => tags = run_parser(tag_field(), key, &value, &frontmatter, field),
+                _ => remaining.push(Field {
+                    key: key.into(),
+                    value: Value::Unknown(value),
                 }),
             }
         }
@@ -371,7 +368,7 @@ impl Task {
         };
 
         let tags = match tags? {
-            Some(v) => v,
+            Some(v) => v.into_iter().collect(),
             None => {
                 dirty = true;
                 log::warn!(
@@ -479,15 +476,38 @@ mod parser {
         }
     }
 
-    pub fn parse_fields(frontmatter: &str, line_offset: usize) -> Result<Vec<Field>, eyre::Report> {
-        fn get_location(s: &str, line_offset: usize) -> (usize, usize) {
-            (
-                line_offset + s.lines().count(),
+    pub struct Frontmatter {
+        line_offset: usize,
+        text: String,
+        pub parsed_fields: Vec<Spanned<(String, String)>>,
+    }
+    impl Frontmatter {
+        pub fn get_location(&self, byte: usize) -> (usize, usize) {
+            let s = dbg!(self.text.split_at(byte).0);
+            let out = (
+                self.line_offset + s.lines().count(),
                 1 + s.lines().last().map(|l| l.chars().count()).unwrap_or(0),
-            )
+            );
+            // instead of reporting the last character of a line, report the next line.
+            if s.ends_with(|s: char| s.is_newline()) && self.text.lines().count() > out.0 {
+                return (out.0 + 1, 0);
+            }
+            out
         }
+    }
 
-        let result = field()
+    pub fn parse_fields(
+        frontmatter: &str,
+        line_offset: usize,
+    ) -> Result<Frontmatter, eyre::Report> {
+        let mut out = Frontmatter {
+            line_offset,
+            text: frontmatter.to_string(),
+            parsed_fields: vec![],
+        };
+
+        out.parsed_fields = field()
+            .spanned()
             .repeated()
             .collect::<Vec<_>>()
             .parse(frontmatter)
@@ -497,20 +517,48 @@ mod parser {
                     return eyre!("missing error");
                 };
                 let (start, _end) = (e.span().start, e.span().end);
-                let (line, col) = get_location(frontmatter.split_at(start).0, line_offset);
-
+                let (line, col) = out.get_location(start);
                 eyre!("parsing fields. {} at {line}:{col}", e.reason())
             })?;
-        Ok(result)
+
+        Ok(out)
     }
 
-    fn field<'src>() -> impl Parser<'src, &'src str, Field, extra::Err<Rich<'src, char>>> {
-        let line = any()
+    fn field<'src>() -> impl Parser<'src, &'src str, (String, String), extra::Err<Rich<'src, char>>>
+    {
+        let any_field = line()
+            .then(
+                just("  ")
+                    .map(|s| s.to_owned())
+                    .then(line())
+                    .repeated()
+                    .collect::<Vec<(String, String)>>(),
+            )
+            .map(|(first_line, lines)| {
+                first_line
+                    + "\n"
+                    + &lines
+                        .into_iter()
+                        .map(|(whitespace, line)| whitespace + &line + "\n")
+                        .collect::<String>()
+            });
+
+        ident()
+            .then_ignore(just(":"))
+            .then_ignore(inline_whitespace())
+            .then(any_field)
+            // .then(choice((date_line, box_list, tag_list, any_field)))
+            .map(|(key, value): (&str, _)| (key.to_string(), value))
+    }
+    fn line<'src>() -> impl Parser<'src, &'src str, String, extra::Err<Rich<'src, char>>> {
+        any()
             .filter(|c: &char| !c.is_newline())
             .repeated()
             .collect::<String>()
-            .then_ignore(newline());
-        let date = digits(10)
+            .then_ignore(newline())
+    }
+    fn date<'src>() -> impl Parser<'src, &'src str, NaiveDateTime, extra::Err<Rich<'src, char>>> {
+        digits(10)
             .exactly(4)
             .then(just("-"))
             .then(digits(10).exactly(2))
@@ -526,45 +574,40 @@ mod parser {
             .try_map(|t: &str, span| {
                 NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S")
                     .map_err(|e| Rich::custom(span, e))
-            });
-        let date_line = date.map(Value::Date).then_ignore(newline());
-        let box_list = newline()
-            .ignore_then(
-                just("  - ")
-                    .ignore_then(choice((
-                        just("Started").to(BoxState::Started),
-                        just("Empty").to(BoxState::Empty),
-                        just("Checked")
-                            .ignore_then(just("("))
-                            .ignore_then(date)
-                            .then_ignore(just(")"))
-                            .map(BoxState::Checked),
-                    )))
-                    .then_ignore(newline())
-                    .repeated()
-                    .at_least(1)
-                    .collect::<Vec<_>>(),
-            )
-            .map(Value::BoxList);
-        let tag_list = newline()
-            .ignore_then(
-                just("  - ")
-                    .ignore_then(line)
-                    .repeated()
-                    .at_least(1)
-                    .collect::<Vec<_>>(),
-            )
-            .map(Value::TagList);
-        let text = line.map(Value::Unknown);
-
-        ident()
-            .then_ignore(just(":"))
-            .then_ignore(inline_whitespace())
-            .then(choice((date_line, box_list, tag_list, text)))
-            .map(|(key, value): (&str, _)| Field {
-                key: key.to_string(),
-                value,
             })
+    }
+    pub fn date_field<'src>()
+    -> impl Parser<'src, &'src str, NaiveDateTime, extra::Err<Rich<'src, char>>> {
+        date().then_ignore(newline())
+    }
+    pub fn box_field<'src>()
+    -> impl Parser<'src, &'src str, Vec<BoxState>, extra::Err<Rich<'src, char>>> {
+        newline().ignore_then(
+            just("  - ")
+                .ignore_then(choice((
+                    just("Started").to(BoxState::Started),
+                    just("Empty").to(BoxState::Empty),
+                    just("Checked")
+                        .ignore_then(just("("))
+                        .ignore_then(date())
+                        .then_ignore(just(")"))
+                        .map(BoxState::Checked),
+                )))
+                .then_ignore(newline())
+                .repeated()
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
+    }
+    pub fn tag_field<'src>()
+    -> impl Parser<'src, &'src str, Vec<String>, extra::Err<Rich<'src, char>>> {
+        newline().ignore_then(
+            just("  - ")
+                .ignore_then(line())
+                .repeated()
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
     }
 }
 
