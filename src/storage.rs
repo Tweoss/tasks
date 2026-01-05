@@ -4,7 +4,8 @@ mod span_edit;
 pub mod text_edit;
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
+    ffi::OsStr,
     fmt::Display,
     fs::{self, OpenOptions, create_dir_all},
     io::{Read, Write},
@@ -95,6 +96,7 @@ impl Data {
     }
 
     pub fn write_dirty(&mut self) -> Result<()> {
+        self.fix_path_conflicts();
         for index in 0..self.tasks.len() {
             if self.tasks[index].dirty {
                 self.write_file(index)?;
@@ -103,15 +105,45 @@ impl Data {
         Ok(())
     }
 
+    fn fix_path_conflicts(&mut self) {
+        let mut path_to_index: HashMap<_, Vec<_>> = HashMap::new();
+        for index in 0..self.tasks.len() {
+            let t = &self.tasks[index];
+            let path = self.get_task_path(t);
+            let v = path_to_index.entry(path).or_default();
+            v.push(index);
+        }
+        for (path, indices) in path_to_index {
+            if indices.len() < 2 {
+                continue;
+            }
+            // Manually override source path to avoid path conflicts.
+            for (i, task_index) in indices.iter().enumerate() {
+                let t = &mut self.tasks[*task_index];
+                // We're not overwriting data because rename would have already
+                // been used to set title.
+                t.rename = Some(t.title.clone());
+                let mut path = path.clone();
+                path.set_file_name(
+                    path.file_stem()
+                        .expect("should have had file name")
+                        .to_string_lossy()
+                        .into_owned()
+                        + &format!("_{i}.")
+                        + &path
+                            .extension()
+                            .map(|e| e.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                );
+                t.source_path = Some(path);
+                t.dirty = true;
+            }
+        }
+    }
+
     fn write_file(&mut self, index: usize) -> Result<()> {
         let task = &self.tasks[index];
-        let path = task.source_path.clone().unwrap_or_else(|| {
-            self.source_dir
-                .clone()
-                .join(task.created.year().to_string())
-                .join(format!("{:02}", task.created.month()))
-                .join(format!("{}.md", urlencoding::encode(&task.title)))
-        });
+        let path = self.get_task_path(task);
         let parent = path.parent().unwrap();
         create_dir_all(parent).wrap_err(format!("creating parent '{}'", parent.display()))?;
         OpenOptions::new()
@@ -123,6 +155,16 @@ impl Data {
             .write_all(task.to_string().as_bytes())?;
         self.clear_dirty(index);
         Ok(())
+    }
+
+    fn get_task_path(&self, task: &Task) -> PathBuf {
+        task.source_path.clone().unwrap_or_else(|| {
+            self.source_dir
+                .clone()
+                .join(task.created.year().to_string())
+                .join(format!("{:02}", task.created.month()))
+                .join(format!("{}.md", urlencoding::encode(&task.title)))
+        })
     }
 
     pub fn tasks(&self) -> &[Task] {
@@ -191,6 +233,7 @@ pub struct Task {
     completed: Option<Date>,
     boxes: Vec<BoxState>,
     tags: HashSet<String>,
+    rename: Option<String>,
     context: KeyboardEditable,
     source_path: Option<PathBuf>,
     dirty: bool,
@@ -225,6 +268,7 @@ impl Task {
             created,
             boxes,
             tags,
+            rename: None,
             context: KeyboardEditable::from_rope(context, true),
             completed,
             source_path: None,
@@ -327,12 +371,12 @@ impl Task {
                     // Last wins.
                     created = run_parser(date_field(), key, &value, &frontmatter, field);
                 }
-                "boxes" if key.is_empty() => boxes = Ok(None),
+                "boxes" if value.trim().is_empty() => boxes = Ok(None),
                 "boxes" => boxes = run_parser(box_field(), key, &value, &frontmatter, field),
                 "completed" => {
                     completed = run_parser(date_field(), key, &value, &frontmatter, field)
                 }
-                "tags" if key.is_empty() => tags = Ok(None),
+                "tags" if value.trim().is_empty() => tags = Ok(None),
                 "tags" => tags = run_parser(tag_field(), key, &value, &frontmatter, field),
                 "rename" => rename = run_parser(rename_field(), key, &value, &frontmatter, field),
                 _ => remaining.push(Field {
@@ -380,8 +424,9 @@ impl Task {
             }
         };
 
-        let title = match rename? {
-            Some(v) => v,
+        let rename = rename?;
+        let title = match &rename {
+            Some(v) => v.to_owned(),
             None => title,
         };
 
@@ -391,6 +436,7 @@ impl Task {
             boxes,
             completed: completed?,
             tags,
+            rename,
             context: KeyboardEditable::from_rope(context.into(), true),
             source_path: Some(path),
             dirty,
@@ -407,21 +453,18 @@ impl Display for Task {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "---")?;
         writeln!(f, "created: {}", Value::Date(self.created))?;
-        writeln!(
-            f,
-            "completed: {}",
-            self.completed
-                .map(Value::Date)
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_default()
-        )?;
+        if let Some(completed) = self.completed {
+            writeln!(f, "completed: {}", Value::Date(completed))?;
+        }
         write!(f, "boxes:{}", Value::BoxList(self.boxes.clone()))?;
         write!(
             f,
             "tags:{}",
             Value::TagList(self.tags.iter().cloned().collect())
         )?;
+        if let Some(rename) = &self.rename {
+            writeln!(f, "rename: {}", Value::Rename(rename.clone()))?;
+        }
         for field in &self.extra_fields {
             writeln!(f, "{}: {}", field.key, field.value)?;
         }
@@ -518,6 +561,7 @@ mod parser {
             .spanned()
             .repeated()
             .collect::<Vec<_>>()
+            .padded()
             .parse(frontmatter)
             .into_result()
             .map_err(|e| {
@@ -612,7 +656,6 @@ mod parser {
             just("  - ")
                 .ignore_then(line())
                 .repeated()
-                .at_least(1)
                 .collect::<Vec<_>>(),
         )
     }
