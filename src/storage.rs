@@ -18,7 +18,7 @@ use eyre::{Context, OptionExt, Result, eyre};
 
 use crate::storage::{
     keyboard_edit::KeyboardEditable,
-    parser::{Field, Frontmatter, Value, box_field, date_field, tag_field},
+    parser::{Field, Frontmatter, Value, box_field, date_field, rename_field, tag_field},
     text_edit::TextOp,
 };
 
@@ -286,11 +286,11 @@ impl Task {
             .split_once("---\n")
             .ok_or_eyre("missing frontmatter end marker")?;
         let frontmatter = parser::parse_fields(front_matter, line_offset)?;
-        // let fields: Vec<Field> = parser::parse_fields(front_matter, line_offset)?;
         let mut created = Ok(None);
         let mut boxes = Ok(None);
         let mut tags = Ok(None);
         let mut completed = Ok(None);
+        let mut rename = Ok(None);
 
         fn format_error(
             name: &str,
@@ -334,6 +334,7 @@ impl Task {
                 }
                 "tags" if key.is_empty() => tags = Ok(None),
                 "tags" => tags = run_parser(tag_field(), key, &value, &frontmatter, field),
+                "rename" => rename = run_parser(rename_field(), key, &value, &frontmatter, field),
                 _ => remaining.push(Field {
                     key: key.into(),
                     value: Value::Unknown(value),
@@ -377,6 +378,11 @@ impl Task {
                 );
                 HashSet::new()
             }
+        };
+
+        let title = match rename? {
+            Some(v) => v,
+            None => title,
         };
 
         Ok(Self {
@@ -449,6 +455,7 @@ mod parser {
         Date(Date),
         BoxList(Vec<BoxState>),
         TagList(Vec<String>),
+        Rename(String),
     }
 
     impl Display for Value {
@@ -472,6 +479,7 @@ mod parser {
                     }
                     Ok(())
                 }
+                Value::Rename(t) => write!(f, "{}", t),
             }
         }
     }
@@ -547,7 +555,6 @@ mod parser {
             .then_ignore(just(":"))
             .then_ignore(inline_whitespace())
             .then(any_field)
-            // .then(choice((date_line, box_list, tag_list, any_field)))
             .map(|(key, value): (&str, _)| (key.to_string(), value))
     }
     fn line<'src>() -> impl Parser<'src, &'src str, String, extra::Err<Rich<'src, char>>> {
@@ -608,6 +615,10 @@ mod parser {
                 .at_least(1)
                 .collect::<Vec<_>>(),
         )
+    }
+    pub fn rename_field<'src>() -> impl Parser<'src, &'src str, String, extra::Err<Rich<'src, char>>>
+    {
+        line()
     }
 }
 
